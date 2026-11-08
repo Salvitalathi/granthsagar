@@ -1,0 +1,15 @@
+name: Network check
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in https://ollama.com/install.sh https://registry.ollama.ai/v2/ \
+                   https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tgz \
+                   https://hub.docker.com/v2/repositories/ollama/ollama/ https://huggingface.co/api/models/Qwen/Qwen2.5-7B-Instruct-GGUF \
+                   https://gretil.sub.uni-goettingen.de/gretil.html; do
+            code=$(curl -s -o /dev/null -L -r 0-1000 -w "%{http_code} %{url_effective}" --max-time 30 "$u")
+            echo "$u -> $code"
+          done
+          docker pull ollama/ollama:latest >/dev/null 2>&1 && echo "docker ollama: OK" || echo "docker ollama: FAIL"
