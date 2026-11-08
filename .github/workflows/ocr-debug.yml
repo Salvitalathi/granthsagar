@@ -1,0 +1,17 @@
+name: OCR debug
+on: workflow_dispatch
+jobs:
+  dbg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-hin tesseract-ocr-san tesseract-ocr-mar >/dev/null
+          pip install -q pypdfium2 pillow
+          python tests/ocr_debug.py mar+san 6
+          python tests/ocr_debug.py hin+san 3
+          python tests/ocr_debug.py hin+san 3 sample_scan.pdf
+          python tests/ocr_debug.py mar+san 3 sample_scan.pdf
+          python tests/ocr_debug.py mar 3 sample_scan.pdf
