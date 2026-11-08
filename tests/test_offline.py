@@ -153,6 +153,71 @@ if pdf_ocr.check_setup()[0]:
         print("⏭  मराठी OCR test सोडला (mar भाषा-फाइल नाही)")
     shutil.rmtree(zt, ignore_errors=True)
 
+# ---- 2e. Windows-सारख्या अडचणी ----
+if pdf_ocr.check_setup()[0]:
+    _wd = tempfile.mkdtemp()
+    _src_dir = os.path.join(_wd, "माझे ग्रंथ"); os.makedirs(_src_dir)
+    _pdf = os.path.join(_src_dir, "अग्नि पुराण.pdf")
+    shutil.copy(os.path.join(ROOT, "tests", "data", "sample_scan.pdf"), _pdf)
+    # (1) Tesseract ला फक्त ASCII जागा
+    _calls, _orig_run = [], pdf_ocr.run
+    def _rec(cmd, **kw):
+        if "tesseract" in os.path.basename(str(cmd[0])).lower():
+            _calls.append(cmd)
+        return _orig_run(cmd, **kw)
+    pdf_ocr.run = _rec
+    try:
+        pdf_ocr.process_pdf(_pdf, "अग्नि पुराण", os.path.join(_wd, "out"), lang="hin", jobs=2, progress=lambda m: None)
+    finally:
+        pdf_ocr.run = _orig_run
+    _paths = [a for c in _calls for a in c[1:] if os.sep in str(a)]
+    check("Windows: Tesseract ला दिलेल्या सर्व जागा इंग्रजी-अक्षरी (देवनागरी नाव असूनही)",
+          bool(_paths) and all(str(a).isascii() for a in _paths))
+    # (2)/(3) Tesseract अपयशी किंवा रिकामा — 'तयार' म्हणू नये
+    _fake = os.path.join(_wd, "faketess.sh")
+    for _mode, _label in (("fail", "Tesseract अपयशी -> स्पष्ट error, रिकामी पाने नाहीत"),
+                          ("empty", "OCR रिकामा -> 'तयार' नाही, error")):
+        with open(_fake, "w") as f:
+            f.write("#!/bin/sh\ncase \"$*\" in *--list-langs*) echo 'x'; echo hin; echo san; exit 0;; esac\n" +
+                    ("echo 'Error: cannot read input file' >&2; exit 1\n" if _mode == "fail" else "exit 0\n"))
+        os.chmod(_fake, 0o755)
+        _orig_find = pdf_ocr.find_tesseract
+        pdf_ocr.find_tesseract = lambda: _fake
+        _err = None
+        try:
+            pdf_ocr.process_pdf(_pdf, "रिकामा " + _mode, os.path.join(_wd, "out2"), lang="hin", jobs=1,
+                                progress=lambda m: None, force_ocr=True)
+        except pdf_ocr.OCRSetupError as e:
+            _err = str(e)
+        finally:
+            pdf_ocr.find_tesseract = _orig_find
+        _made = glob.glob(os.path.join(_wd, "out2", "*", "part_*.txt"))
+        check(_label, _err is not None and not _made)
+    # (4) zip हलवता आली नाही तरी पुन्हा extract नाही
+    gs.PDF_INBOX, gs.DOCS_DIR = os.path.join(_wd, "pdf_inbox"), os.path.join(_wd, "granth")
+    gs.PDF_OUT = os.path.join(gs.DOCS_DIR, "pdf"); os.makedirs(gs.PDF_INBOX)
+    with zipfile.ZipFile(os.path.join(gs.PDF_INBOX, "संग्रह.zip"), "w") as z:
+        z.write(_pdf, "अग्नि पुराण.pdf")
+    _orig_move = shutil.move
+    def _locked(src, dst, *a, **k):
+        if src.endswith(".zip"):
+            raise PermissionError(32, "The process cannot access the file")
+        return _orig_move(src, dst, *a, **k)
+    shutil.move = _locked
+    try:
+        gs.unpack_zips(lambda *_: None)
+    finally:
+        shutil.move = _orig_move
+    check("Windows: zip हलवता आली नाही तरी crash नाही, पुन्हा extract नाही", not gs.pending_zips()
+          and any(p.endswith("अग्नि पुराण.pdf") for p in gs.pending_pdfs()))
+    # (5) जुन्या आवृत्तीत '0 पाने' झालेली PDF परत रांगेत
+    os.makedirs(os.path.join(gs.PDF_INBOX, "done"), exist_ok=True)
+    shutil.copy(_pdf, os.path.join(gs.PDF_INBOX, "done", "वायु पुराण.pdf"))
+    os.makedirs(os.path.join(gs.PDF_OUT, pdf_ocr.slugify("वायु पुराण")))
+    check("'0 पाने' झालेली PDF आपोआप पुन्हा रांगेत", gs.recover_empty_done() == 1
+          and os.path.exists(os.path.join(gs.PDF_INBOX, "वायु पुराण.pdf")))
+    shutil.rmtree(_wd, ignore_errors=True)
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)

@@ -16,11 +16,39 @@ PDF ग्रंथ -> स्वच्छ मजकूर (ग्रंथसा
        pip install pypdfium2 pillow   (Poppler असेल तर तेही चालते)
 हिंदी/मराठी भाषेची फाइल नसेल तर ती एकदाच इंटरनेटवरून "tessdata" folder मध्ये उतरवली जाते.
 """
-import argparse, contextlib, glob, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.request, zipfile
+import argparse, contextlib, glob, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.request, zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+def _ascii_dir(*parts):
+    """इंग्रजी-अक्षरी (ASCII) जागा — Windows वरचा Tesseract देवनागरी path मधील फाइल उघडू शकत नाही"""
+    roots = [tempfile.gettempdir(), os.environ.get("PUBLIC", "")]
+    if os.name == "nt":
+        roots.append(os.path.splitdrive(os.path.abspath(HERE))[0] + os.sep + "granthsagar_tmp")
+    roots.append(os.path.join(os.path.expanduser("~"), ".granthsagar_tmp"))
+    for root in roots:
+        if root and os.path.abspath(root).isascii():
+            d = os.path.join(root, *parts)
+            try:
+                os.makedirs(d, exist_ok=True)
+                return d
+            except OSError:
+                continue
+    d = os.path.join(tempfile.gettempdir(), *parts)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 LOCAL_TESSDATA = os.path.join(HERE, "tessdata")
+if not os.path.abspath(LOCAL_TESSDATA).isascii():          # ग्रंथसागर folder च्या path मध्ये देवनागरी
+    LOCAL_TESSDATA = _ascii_dir("granthsagar_tessdata")
+
+
+def _work_dir(name):
+    """एका ग्रंथाचा OCR cache — ASCII नाव (v2: जुने रिकाम्या पानांचे cache वापरू नयेत)"""
+    key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")[:30]
+    key = (key + "_" if key else "") + hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
+    return _ascii_dir("granthsagar_ocr_v2", key)
 TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/{}.traineddata"
 DEVA = re.compile(r"[\u0900-\u097F]")
 WORD = re.compile(r"[\u0900-\u097F]+")
@@ -358,7 +386,10 @@ def detect_lang(pdf, n, tess, work, progress=print):
             # 'tsv' config-फाइल स्थानिक tessdata मध्ये नसते — म्हणून थेट setting
             cmd = [tess, png, "stdout", "-l", lang, "--psm", "3", "-c", "tessedit_create_tsv=1"] + \
                   (["--tessdata-dir", tessdata] if tessdata else [])
-            for row in run(cmd).stdout.splitlines()[1:]:
+            r = run(cmd)
+            if r.returncode != 0:
+                raise OCRSetupError(f"Tesseract ({lang}) चालला नाही: {(r.stderr or '').strip()[:300]}")
+            for row in r.stdout.splitlines()[1:]:
                 c = row.split("\t")
                 if len(c) == 12 and DEVA.search(c[11]):
                     ws.append(c[11].strip(" ।,.;:!?\"'"))
@@ -426,8 +457,7 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
     # कमाल 4 समांतर: chat मॉडेल (12B ~8 GB) सोबत RAM पुरावी. GS_OCR_JOBS ने बदलता येते.
     jobs = jobs or int(os.environ.get("GS_OCR_JOBS", 0)) or max(1, min(4, (os.cpu_count() or 2) - 1))
     slug = slugify(name)
-    work = os.path.join(tempfile.gettempdir(), "granth_ocr", slug)
-    os.makedirs(work, exist_ok=True)
+    work = _work_dir(name)
     pdf = prepare_pdf(pdf, work)                      # खराब असेल तर PdfFileError (कारणासह)
     n = page_count(pdf)
     if n == 0:
@@ -471,8 +501,11 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
                 cmd = [tess, png, "stdout", "-l", lang, "--psm", "3"]
                 if tessdata:
                     cmd += ["--tessdata-dir", tessdata]
-                text = run(cmd, env=env).stdout
+                r = run(cmd, env=env)
                 os.remove(png)
+                if r.returncode != 0:            # Tesseract अपयशी — रिकामे पान save करू नका
+                    raise OCRSetupError(f"Tesseract चालला नाही: {(r.stderr or '').strip()[:300]}")
+                text = r.stdout
             with open(txt + ".tmp", "w", encoding="utf-8") as f:
                 f.write(clean(text))
             os.replace(txt + ".tmp", txt)
@@ -488,6 +521,16 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
                     rate = new / max(time.time() - t0, 1e-6)
                     left = (n - i) / rate / 60 if rate > 0 else 0
                     progress(f"🔍 {name}: {i}/{n} पाने" + (f", उरलेला वेळ ~{left:.0f} मिनिटे" if i < n else ""))
+
+    # सुरक्षा: एकाही पानावर मजकूर नाही = काहीतरी चुकले (Tesseract/भाषा) — 'तयार' म्हणू नका
+    pages_txt = sorted(f for f in os.listdir(work) if re.match(r"p\d{5}\.txt$", f))
+    with_text = sum(len(DEVA.findall(open(os.path.join(work, f), encoding="utf-8").read())) >= 40
+                    or len(re.findall(r"[A-Za-z]", open(os.path.join(work, f), encoding="utf-8").read())) >= 200
+                    for f in pages_txt)
+    if n >= 1 and with_text == 0:
+        shutil.rmtree(work, ignore_errors=True)
+        raise OCRSetupError(f"{name}: {n} पानांपैकी एकाही पानावर मजकूर मिळाला नाही. Tesseract किंवा भाषा-फाइलमध्ये "
+                            f"अडचण असावी — काळ्या खिडकीतील आधीचे संदेश पाहा. PDF तशीच ठेवली आहे.")
 
     # भागांत लिहा (प्रत्येक ~150 KB), प्रत्येक पानाला शीर्षक
     dest = os.path.join(out_dir, slug)

@@ -45,7 +45,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.2"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.3"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -487,43 +487,97 @@ def start_indexing():
 TEXT_EXT = (".txt", ".md", ".csv", ".docx")
 
 
+ZIP_LOCK = threading.Lock()
+
+
+def _zip_marker(z):
+    """extract झालेल्या zip ची खूण (Windows ने zip हलवू दिली नाही तरी ती पुन्हा extract होऊ नये)"""
+    st = os.stat(z)
+    return os.path.join(PDF_INBOX, "done", f".{os.path.basename(z)}.{st.st_size}.extracted")
+
+
 def pending_zips():
     out = []
     for base in (PDF_INBOX, DOCS_DIR):
         if os.path.isdir(base):
             for root, dirs, files in os.walk(base):
                 dirs[:] = [d for d in dirs if d not in ("done", "failed")]
-                out += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(".zip")]
+                for f in sorted(files):
+                    p = os.path.join(root, f)
+                    if f.lower().endswith(".zip"):
+                        try:
+                            if os.path.exists(_zip_marker(p)):
+                                continue
+                        except OSError:
+                            continue
+                        out.append(p)
     return out
 
 
 def unpack_zips(log=print):
     """zip -> pdf_inbox/<नाव>/ (PDF OCR साठी), आतील मजकूर-फाइल्स थेट granth/pdf/<नाव>/. परत: मजकूर-फाइल्स संख्या"""
-    texts = 0
-    for z in pending_zips():
-        stem = os.path.splitext(os.path.basename(z))[0]
-        safe = re.sub(r'[\\/:*?"<>|]+', "_", stem).strip(" .") or "zip"
-        log(f"📦 {os.path.basename(z)} extract करत आहे…")
-        try:
-            files = pdf_ocr.extract_zip(z, os.path.join(PDF_INBOX, safe))
-        except Exception as e:
-            log(f"⚠️ {os.path.basename(z)}: zip उघडता आली नाही ({e})")
-            files = None
-        if files is not None:
-            for f in files:
-                if f.lower().endswith(TEXT_EXT):
-                    d = os.path.join(PDF_OUT, safe)
-                    os.makedirs(d, exist_ok=True)
-                    shutil.move(f, os.path.join(d, os.path.basename(f))); texts += 1
-            if not any(f.lower().endswith((".pdf",) + TEXT_EXT) for f in files):
-                log(f"⚠️ {os.path.basename(z)} मध्ये PDF/मजकूर फाइल नाही")
-        done = os.path.join(PDF_INBOX, "done")
-        os.makedirs(done, exist_ok=True)
-        target = os.path.join(done, os.path.basename(z))
-        if os.path.exists(target):
-            target = os.path.join(done, f"{int(time.time())}_{os.path.basename(z)}")
-        shutil.move(z, target)
-    return texts
+    if not ZIP_LOCK.acquire(blocking=False):        # दुसरीकडे आधीच extract चालू आहे
+        return 0
+    try:
+        texts = 0
+        for z in pending_zips():
+            if not file_is_stable(z):
+                log(f"⏳ {os.path.basename(z)} अजून copy होत आहे — थोड्या वेळाने घेतो")
+                continue
+            stem = os.path.splitext(os.path.basename(z))[0]
+            safe = re.sub(r'[\\/:*?"<>|]+', "_", stem).strip(" .") or "zip"
+            log(f"📦 {os.path.basename(z)} extract करत आहे…")
+            try:
+                files = pdf_ocr.extract_zip(z, os.path.join(PDF_INBOX, safe))
+            except Exception as e:
+                log(f"⚠️ {os.path.basename(z)}: zip उघडता आली नाही ({e})")
+                files = None
+            if files is not None:
+                for f in files:
+                    if f.lower().endswith(TEXT_EXT):
+                        d = os.path.join(PDF_OUT, safe)
+                        os.makedirs(d, exist_ok=True)
+                        shutil.move(f, os.path.join(d, os.path.basename(f))); texts += 1
+                n_pdf = sum(f.lower().endswith(".pdf") for f in files)
+                log(f"📦 {os.path.basename(z)}: {n_pdf} PDF मिळाल्या" if n_pdf
+                    else f"⚠️ {os.path.basename(z)} मध्ये PDF नाही")
+            done = os.path.join(PDF_INBOX, "done")
+            os.makedirs(done, exist_ok=True)
+            marker = _zip_marker(z)
+            open(marker, "w").close()                  # आधी खूण — मग हलवा
+            target = os.path.join(done, os.path.basename(z))
+            if os.path.exists(target):
+                target = os.path.join(done, f"{int(time.time())}_{os.path.basename(z)}")
+            try:
+                shutil.move(z, target)
+            except OSError as e:                       # Windows: फाइल वापरात (antivirus/explorer)
+                log(f"ℹ️ {os.path.basename(z)} done मध्ये हलवता आली नाही ({e.__class__.__name__}) — "
+                    f"ती तिथेच राहील, पण पुन्हा extract होणार नाही. नंतर हाताने काढू शकता.")
+        return texts
+    finally:
+        ZIP_LOCK.release()
+
+
+def recover_empty_done():
+    """जुन्या आवृत्तीत '0 पाने' होऊन done मध्ये गेलेल्या PDF पुन्हा रांगेत आणा"""
+    done = os.path.join(PDF_INBOX, "done")
+    if not (pdf_ocr and os.path.isdir(done)):
+        return 0
+    back = 0
+    for f in os.listdir(done):
+        if not f.lower().endswith(".pdf"):
+            continue
+        name = re.sub(r"^\d{9,}_", "", os.path.splitext(f)[0]).replace("_", " ")
+        out = os.path.join(PDF_OUT, pdf_ocr.slugify(name))
+        if os.path.isdir(out) and not any(x.startswith("part_") for x in os.listdir(out)):
+            try:
+                shutil.move(os.path.join(done, f), os.path.join(PDF_INBOX, f))
+                back += 1
+            except OSError:
+                pass
+    if back:
+        print(f"♻️ {back} PDF चा OCR आधी रिकामा झाला होता — त्या पुन्हा रांगेत घेतल्या", flush=True)
+    return back
 
 
 def pending_pdfs():
@@ -571,6 +625,14 @@ def move_aside(pdf, sub, note=None):
             break
         parent = os.path.dirname(parent)
     return target
+
+
+def safe_start_ocr():
+    try:
+        return start_ocr()
+    except Exception as e:
+        print(f"⚠️ PDF काम सुरू करताना अडचण: {e}", flush=True)
+        return False
 
 
 def start_ocr():
@@ -678,7 +740,7 @@ def watch_folders():
             if pdf_ocr and not OCR_STATUS["running"] and not OCR_STATUS.get("blocked") \
                     and (pending_zips() or pending_pdfs()):
                 print("📥 नवीन PDF/zip सापडली — काम सुरू", flush=True)
-                start_ocr()
+                safe_start_ocr()
         except Exception:
             pass
 
@@ -815,7 +877,7 @@ class Handler(BaseHTTPRequestHandler):
                 path = save_upload(self.rfile, int(self.headers.get("Content-Length", 0)),
                                    qs.get("file", ["granth.pdf"])[0], qs.get("name", [""])[0],
                                    qs.get("lang", ["auto"])[0])
-                start_ocr()
+                safe_start_ocr()
                 self._json({"ok": True, "msg": f"📥 {os.path.basename(path)} मिळाली — मजकूर बनवणे सुरू (प्रगती वर दिसेल)."})
             except Exception as e:
                 self._json({"ok": False, "msg": f"⚠️ {e}"})
@@ -836,7 +898,7 @@ class Handler(BaseHTTPRequestHandler):
                                                    "यात PDF किंवा PDF ची ZIP टाका — 20 सेकंदांत काम आपोआप सुरू होईल."})
         if self.path == "/reindex":
             OCR_STATUS["blocked"] = ""            # बटण दाबले — पुन्हा प्रयत्न
-            start_ocr()
+            safe_start_ocr()
             started = start_indexing()
             msg = docs_report() + "\n" + ("⏳ वाचन सुरू झाले — प्रगती वरच्या पट्टीत दिसेल. तोपर्यंत प्रश्न विचारू शकता."
                                           if started else "⏳ वाचन आधीच चालू आहे.")
@@ -1029,7 +1091,8 @@ def main():
     print(f"📥 PDF/ZIP इथे टाका: {PDF_INBOX}")
     if ok:
         print("📖 नवीन/बदललेले ग्रंथ पार्श्वभूमीत वाचत आहे — chat लगेच वापरता येईल.")
-        start_ocr()
+        recover_empty_done()
+        safe_start_ocr()
         start_indexing()
     if pdf_ocr:
         threading.Thread(target=watch_folders, daemon=True).start()
