@@ -1,0 +1,79 @@
+name: Live test (खरा AI)
+# GitHub वर Ollama + Qwen चालवून, GRETIL वरून ग्रंथ उतरवून, tests/questions.txt मधील प्रश्न विचारतो.
+# उत्तरे: Actions -> या run चे "Summary" पान, आणि "answers" artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Chat model"
+        default: "qwen2.5:7b"
+      patterns:
+        description: "GRETIL फाइल-नावातील शब्द (space ने वेगळे; रिकामे = default ग्रंथ)"
+        default: ""
+  push:
+    branches: [main]
+    paths: ["granthsagar.py", "granth_tayar.py", "scripts/**", "tests/questions.txt", ".github/workflows/live.yml"]
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      GS_CHAT_MODEL: ${{ github.event.inputs.model || 'qwen2.5:7b' }}
+      GS_EMBED_MODEL: bge-m3
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ env.GS_CHAT_MODEL }}-${{ env.GS_EMBED_MODEL }}
+
+      - name: Install & start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
+          ollama pull "$GS_CHAT_MODEL"
+          ollama pull "$GS_EMBED_MODEL"
+          ollama list
+
+      - name: Download texts from GRETIL
+        run: |
+          python scripts/download_granth.py --list | tee gretil_list.txt | head -5
+          python scripts/download_granth.py ${{ github.event.inputs.patterns }}
+          ls -la granth_raw
+
+      - name: Convert to Devanagari
+        run: |
+          python granth_tayar.py
+          for f in granth/sanskrit/*.txt; do echo "== $f"; sed -n '1,8p' "$f"; done
+
+      - name: Cache file index (embeddings)
+        uses: actions/cache@v4
+        with:
+          path: index.json
+          key: index-${{ env.GS_EMBED_MODEL }}-${{ hashFiles('granth/**') }}
+          restore-keys: index-${{ env.GS_EMBED_MODEL }}-
+
+      - name: Ask questions
+        run: |
+          mapfile -t Q < <(grep -v '^\s*#' tests/questions.txt | grep -v '^\s*$')
+          { echo "# 🪔 ग्रंथसागर — live उत्तरे"; echo; echo "मॉडेल: \`$GS_CHAT_MODEL\`"; echo;
+            ls granth/sanskrit | sed 's/^/- /'; } > answers.md
+          time python granthsagar.py --ask "${Q[@]}" | tee -a answers.md
+          cat answers.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: answers
+          path: |
+            answers.md
+            gretil_list.txt
+            ollama.log
+            granth/sanskrit/

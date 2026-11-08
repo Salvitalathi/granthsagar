@@ -1,0 +1,45 @@
+# 🪔 ग्रंथसागर
+
+वेद, उपनिषदे, पुराणे, आयुर्वेद आणि मंत्र-ग्रंथ वाचून **मराठीत अर्थ समजावणारा**, तुमच्या संगणकावर **offline** चालणारा AI.
+
+- ग्रंथांमधून नेमका श्लोक शोधतो आणि `[अथर्ववेद (शौनक) 1.1.1]` असा संदर्भ देतो
+- श्लोकाचा शब्दार्थ आणि भावार्थ, कथा, आणि ग्रंथानुसार उपाय मराठीत सांगतो
+- गंभीर लक्षणे (छातीत दुखणे, बेशुद्धी, गर्भवती इ.) लिहिली तर आधी लाल सूचना दाखवतो
+- इंटरनेटशिवाय चालतो ([Ollama](https://ollama.com) + Qwen)
+
+> ⚠️ हा अभ्यासासाठीचा AI आहे. AI चुका करू शकतो. उपचार करण्यापूर्वी प्रमाणित वैद्य किंवा डॉक्टरांचा सल्ला घ्या.
+
+## सुरू करणे (Windows)
+
+1. [Ollama](https://ollama.com) आणि [Python](https://python.org) install करा
+2. हा repo download करा (Code → Download ZIP) आणि extract करा
+3. `start.bat` वर double-click करा. पहिल्यांदा सुमारे 6 GB मॉडेल्स उतरतील
+4. Browser मध्ये ग्रंथसागर उघडेल
+
+8 GB RAM असेल तर `granthsagar.py` मध्ये `CHAT_MODEL` बदलून `qwen2.5:3b` करा.
+
+## ग्रंथ जोडणे
+
+| कसे | काय करायचे |
+|---|---|
+| GRETIL वरून (संस्कृत) | `python scripts/download_granth.py` → `python granth_tayar.py` |
+| इतर कोणताही ग्रंथ | `.txt`, `.pdf` किंवा `.docx` फाइल `granth/` folder मध्ये टाका |
+| GRETIL वरील पुराणे | `python scripts/download_granth.py purana` → `python granth_tayar.py` |
+
+नवीन फाइल टाकल्यावर chat मधील **📂 फाइल्स पुन्हा वाचा** दाबा.
+
+## Folder रचना
+
+```
+granthsagar.py         मुख्य app (chat + ग्रंथ शोध)
+granth_tayar.py        IAST → देवनागरी, श्लोक संदर्भ
+scripts/download_granth.py   GRETIL वरून ग्रंथ उतरवणे
+granth/                तुमचे ग्रंथ (AI इथूनच वाचतो)
+tiny_ai/               शिकण्यासाठी: शून्यापासून बनवलेले RNN आणि GPT (फक्त NumPy)
+tests/                 offline tests + live test चे प्रश्न
+```
+
+## GitHub वर चाचणी
+
+- **Tests (offline):** प्रत्येक push वर आपोआप चालतो
+- **Live test (खरा AI):** Actions → "Live test" → Run workflow. GitHub वर Ollama चालवून, ग्रंथ उतरवून `tests/questions.txt` मधील प्रश्न विचारतो. उत्तरे run च्या Summary पानावर दिसतात.
