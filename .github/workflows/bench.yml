@@ -1,0 +1,38 @@
+name: Embedding benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Embedding models"
+        default: "bge-m3 granite-embedding:278m paraphrase-multilingual"
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          nproc; free -g | head -2
+          docker run -d --name ollama -p 11434:11434 ollama/ollama:latest
+          for i in $(seq 1 60); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
+          for m in ${{ github.event.inputs.models }}; do docker exec ollama ollama pull "$m" >/dev/null || echo "pull failed $m"; done
+          python - <<'EOF'
+          import json, time, urllib.request, sys
+          sys.path.insert(0, ".")
+          import granthsagar as g
+          chunks = g.chunk_text(open("granth/atharvaveda/part_01.txt", encoding="utf-8").read())[:96]
+          q = ["अथर्ववेदात तापावर कोणते मंत्र आहेत?", "fever takman charm"]
+          for m in "${{ github.event.inputs.models }}".split():
+              def emb(x):
+                  r = urllib.request.Request("http://127.0.0.1:11434/api/embed",
+                      data=json.dumps({"model": m, "input": x}).encode(), headers={"Content-Type": "application/json"})
+                  return json.loads(urllib.request.urlopen(r, timeout=900).read())["embeddings"]
+              try:
+                  emb(chunks[:2]); t = time.time()
+                  for i in range(0, len(chunks), 32): emb(chunks[i:i + 32])
+                  dt = time.time() - t
+                  print(f"{m}: {len(chunks) / dt:.2f} chunks/s  -> 2.65M chars (~4000 chunks) ≈ {4000 / (len(chunks) / dt) / 60:.0f} min")
+              except Exception as e:
+                  print(m, "ERROR", e)
+          EOF
