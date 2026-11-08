@@ -14,14 +14,16 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-hin fonts-freefont-ttf >/dev/null
           pip install -q numpy pypdfium2 pillow
       - run: python tests/test_offline.py
-      - name: मराठी भाषा-फाइल आपोआप उतरते का
+      - name: मराठी + संस्कृत भाषा-फाइल्स आपोआप एकत्र मिळतात का (Windows सारखे)
         run: |
           python - <<'PY'
           import pdf_ocr, subprocess
           t = pdf_ocr.find_tesseract()
-          d = pdf_ocr.ensure_lang(t, "mar")
-          out = subprocess.run([t, "--list-langs", "--tessdata-dir", d], capture_output=True, text=True).stdout
-          print(out); assert "mar" in out
+          for langs in (["mar", "san"], ["hin", "san"]):
+              d = pdf_ocr.ensure_langs(t, langs)
+              out = subprocess.run([t, "--list-langs"] + (["--tessdata-dir", d] if d else []),
+                                   capture_output=True, text=True).stdout
+              print(langs, d, out.split()[-4:]); assert all(l in out.split() for l in langs)
           PY
       - name: tiny GPT gradient check
         working-directory: tiny_ai

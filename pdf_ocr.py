@@ -24,6 +24,8 @@ LOCAL_TESSDATA = os.path.join(HERE, "tessdata")
 TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/{}.traineddata"
 DEVA = re.compile(r"[\u0900-\u097F]")
 WORD = re.compile(r"[\u0900-\u097F]+")
+LETTERS = re.compile(r"[\u0900-\u094F\u0951-\u0963\u0971-\u097F]+")     # ॐ, दंड, आकडे वगळून
+MANTRA_LINE = re.compile(r"ॐ|नमः|नम:|नमो|स्वाहा|फट्|ह्रीं|क्लीं|श्रीं|ऐं|॥")
 LANGS = {"hin": "हिंदी / संस्कृत", "mar": "मराठी", "san": "संस्कृत (विशेष)"}
 
 
@@ -52,12 +54,12 @@ def find_tesseract():
 _LANG_FAILED = {}
 
 
-def ensure_lang(tess, lang):
-    """भाषा फाइल (hin/mar) उपलब्ध करा. tessdata-dir परत देतो (None = Tesseract चा स्वतःचा)."""
+def ensure_lang(tess, lang, force_local=False):
+    """भाषा फाइल (hin/mar/san) उपलब्ध करा. tessdata-dir परत देतो (None = Tesseract चा स्वतःचा)."""
     if lang in _LANG_FAILED:                      # या वेळी आधीच अपयशी — पुन्हा उतरवू नका
         raise OCRSetupError(_LANG_FAILED[lang])
     have = run([tess, "--list-langs"]).stdout.split()
-    if lang in have:
+    if lang in have and not force_local:
         return None
     os.makedirs(LOCAL_TESSDATA, exist_ok=True)
     path = os.path.join(LOCAL_TESSDATA, f"{lang}.traineddata")
@@ -75,6 +77,39 @@ def ensure_lang(tess, lang):
                                 f"इंटरनेट चालू ठेवून पुन्हा प्रयत्न करा, किंवा Tesseract install करताना "
                                 f"'Additional language data' मध्ये Hindi/Marathi निवडा.")
     return LOCAL_TESSDATA
+
+
+def ensure_langs(tess, langs):
+    """अनेक भाषा एकत्र (उदा. hin+san). सगळ्या एकाच tessdata-dir मध्ये हव्यात — नसतील तर स्थानिक जागेत उतरवतो."""
+    have = set(run([tess, "--list-langs"]).stdout.split())
+    if all(l in have for l in langs):
+        return None
+    for l in langs:                                     # स्थानिक जागेत सगळ्या
+        if not os.path.exists(os.path.join(LOCAL_TESSDATA, f"{l}.traineddata")):
+            sys_dir = _system_tessdata(tess)
+            src = os.path.join(sys_dir, f"{l}.traineddata") if sys_dir else ""
+            if src and os.path.exists(src):
+                os.makedirs(LOCAL_TESSDATA, exist_ok=True)
+                shutil.copy2(src, os.path.join(LOCAL_TESSDATA, f"{l}.traineddata"))
+            else:
+                ensure_lang(tess, l, force_local=True)
+    return LOCAL_TESSDATA
+
+
+def _system_tessdata(tess):
+    out = run([tess, "--list-langs"]).stdout
+    m = re.search(r'"([^"]+)"', out)                    # List of available languages in "/usr/share/…/tessdata/"
+    return m.group(1) if m else None
+
+
+def ocr_lang_spec(tess, lang, progress=print):
+    """OCR साठी भाषा: hin -> hin+san (ॐ आणि संस्कृत श्लोक ओळखण्यासाठी). (spec, tessdata-dir)"""
+    if lang in ("hin", "mar"):
+        try:
+            return f"{lang}+san", ensure_langs(tess, [lang, "san"])
+        except OCRSetupError as e:
+            progress(f"⚠️ संस्कृत OCR भाषा मिळाली नाही — फक्त {LANGS[lang]} वापरत आहे (ॐ कमी ओळखला जाईल). {e}")
+    return lang, ensure_lang(tess, lang)
 
 
 def check_setup(lang="hin"):
@@ -154,7 +189,7 @@ def text_layer_ok(pdf, n):
 # किंवा मंत्राच्या शेवटी) — "5 ग्राम", "३ बार" असे खरे आकडे बदलत नाहीत.
 _DEVA = "ऀ-ॿ"
 _OM_SYM = (r"(?:\$\*\*|\$\*|\$5|\$|3\*|3७|३७|3&|३&|3»|३»|3%|३%|\*|#|&|%|3१|३१|३४|3४|35|३५|3|३|5|५"
-           r"|ऊँ|ऊ|उँ|ओं)")
+           r"|ऊँ|ऊ|उँ|ओं|<|>|«|»)")
 _OM_SYM_NODIGIT = r"(?:\$\*\*|\$\*|\$|\*|#|ऊँ|ऊ|उँ|ओं)"       # आकडे नाहीत — 'अर्थ'/'जप' नियमांसाठी
 _OM_PRE = r"(?<![\w" + _DEVA + r".,/\d$*#&%])"
 _UNITS = (r"(?!\s*(?:बार|दिन|ग्राम|मिनट|भाग|घंटे|घण्टे|घंटा|माला|बूँद|बूंद|चम्मच|तोला|तोले|माशा|मासे|रत्ती"
@@ -208,11 +243,19 @@ def fix_om(text):
     for rx, rep in _OM_RULES:
         text = rx.sub(rep, text)
     text = _MANTRA_RX.sub(lambda m: _MANTRA_WORDS[m.group(1)], text)
+    # ओळीत 'ॐ X नमः' अनेकदा आणि सुरुवातीचा ॐ गळलेला: 'मित्राय नमः। ॐ रवये नमः। …' -> 'ॐ मित्राय …'
+    def lead(m):
+        line = m.group(0)
+        if line.count("ॐ") >= 2 and len(re.findall(r"ॐ\s*[\u0900-\u097F]+\s*(?:नमः|नम:)", line)) >= 2:
+            return re.sub(r"^(\s*)(?=[\u0900-\u097F]+\s*(?:नमः|नम:))", r"\1ॐ ", line, count=1)
+        return line
+    text = re.sub(r"^(?!\s*ॐ).*$", lead, text, flags=re.M)
     # 'हीं' (हिंदीत 'ही' सुद्धा) -> 'ह्रीं' फक्त मंत्रात: ॐ हीं …, हीं क्लीं …, हीं सूर्याय नमः
     return _HRIM_RX.sub("ह्रीं", text)
 
 
 def clean(text):
+    text = fix_om(text)                                    # आधी ॐ — मग गाळणी (मंत्र ओळी वाचतात)
     out = []
     for line in text.splitlines():
         line = line.strip()
@@ -223,15 +266,16 @@ def clean(text):
         line = re.sub(r"(.)\1{5,}", r"\1", line)          # फफफफफफ -> फ
         if line.startswith("["):                           # [ग्रंथ पृ.] शीर्षकाशी गोंधळ नको
             line = "(" + line[1:]
-        words = WORD.findall(line)
-        if len(words) >= 10 and max(words.count(w) for w in set(words)) / len(words) > 0.4:
-            continue                                         # 'आरोग्य-अड्ड आरोग्य-अड्ड …' सजावट
-        if words:
-            short = sum(len(w) <= 2 for w in words) / len(words)
-            if len(words) >= 6 and short > 0.6:            # 'ली नली लक कि ल्‍' सारखी सजावट
+        if not MANTRA_LINE.search(line):                   # मंत्र/श्लोक ओळी कधीच गाळू नका
+            words = LETTERS.findall(line)
+            if len(words) >= 10 and max(words.count(w) for w in set(words)) / len(words) > 0.4:
+                continue                                     # 'आरोग्य-अड्ड आरोग्य-अड्ड …' सजावट
+            if words:
+                short = sum(len(w) <= 2 for w in words) / len(words)
+                if len(words) >= 6 and short > 0.6:        # 'ली नली लक कि ल्‍' सारखी सजावट
+                    continue
+            elif not re.search(r"\d", line) or len(line) < 3:
                 continue
-        elif not re.search(r"\d", line) or len(line) < 3:
-            continue
         out.append(line.replace("\u200d", "").replace("\u200c", ""))
     text = "\n".join(out).strip()
     return fix_om(re.sub(r"(\S)-\n(\S)", r"\1\2", text))
@@ -333,7 +377,8 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
             else:
                 lang = detect_lang(pdf, n, tess, work, progress)
                 open(lang_file, "w").write(lang)
-        tessdata = ensure_lang(tess, lang)
+        lang, tessdata = ocr_lang_spec(tess, lang, progress)     # hin -> hin+san
+        progress(f"🔤 OCR भाषा: {lang}")
         env = dict(os.environ, OMP_THREAD_LIMIT="1")
 
         def one(p):

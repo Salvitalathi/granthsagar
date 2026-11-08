@@ -95,6 +95,27 @@ if pdf_ocr.check_setup()[0] and FONT:
 else:
     print("⏭  PDF OCR test सोडला (Tesseract/pypdfium2/font नाही)")
 
+# ---- 2c2. ॐ थेट OCR मध्ये (hin+san) — संस्कृत भाषा-फाइल मिळाली तरच ----
+if pdf_ocr.check_setup()[0]:
+    _t = pdf_ocr.find_tesseract()
+    try:
+        pdf_ocr.ensure_langs(_t, ["hin", "san"]); _have_san = True
+    except Exception:
+        _have_san = False
+    if _have_san:
+        _od = tempfile.mkdtemp()
+        _logs = []
+        n, dest = pdf_ocr.process_pdf(os.path.join(ROOT, "tests", "data", "om_mantra.pdf"), "ॐ नमुना", _od,
+                                      lang="auto", jobs=1, progress=_logs.append)
+        _txt = open(os.path.join(dest, "part_01.txt"), encoding="utf-8").read()
+        print("   OCR:", [l for l in _logs if "भाषा" in l], "| ॐ:", _txt.count("ॐ"))
+        check("OCR (hin+san): ॐ थेट ओळखला (11 पैकी ≥10)", _txt.count("ॐ") >= 10)
+        check("OCR (hin+san): मंत्र-ओळी गाळल्या नाहीत", "खगाय" in _txt and "यजामहे" in _txt)
+        check("OCR (hin+san): आकडे बदलले नाहीत", "3 बार दिन में 5 ग्राम" in _txt)
+        shutil.rmtree(_od, ignore_errors=True)
+    else:
+        print("⏭  hin+san OCR test सोडला (संस्कृत भाषा-फाइल नाही/उतरवता आली नाही)")
+
 # ---- 2d. zip -> extract -> OCR (भाषा आपोआप) ----
 if pdf_ocr.check_setup()[0]:
     class _CP(zipfile.ZipInfo):                  # Windows Explorer सारखी zip (UTF-8 flag नाही)
