@@ -28,6 +28,12 @@
 | इतर कोणताही ग्रंथ | `.txt`, `.pdf` किंवा `.docx` फाइल `granth/` folder मध्ये टाका |
 | GRETIL वरील पुराणे | `python scripts/download_granth.py purana` → `python granth_tayar.py` |
 
+### PDF ग्रंथ (scan केलेले किंवा जुन्या font मधील)
+
+`python scripts/pdf_ocr.py "ग्रंथ.pdf" --name "ग्रंथाचे नाव"` चालवा. Script स्वतः ठरवते की PDF चा मजकूर थेट घेता येईल की OCR करावे लागेल. तयार झालेला मजकूर `granth/pdf/` मध्ये जातो, आणि प्रत्येक पानाला `[ग्रंथ पृ. 12]` असे शीर्षक असते, म्हणजे उत्तरात पान क्रमांक येतो.
+Windows साठी लागणारे: [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) (install करताना Hindi आणि Marathi निवडा) आणि [Poppler](https://github.com/oschwartz10612/poppler-windows/releases).
+`granth/pdf/` GitHub वर जात नाही (`.gitignore`), कारण तुमच्या PDF चा मजकूर तुमच्याकडेच राहावा.
+
 नवीन फाइल टाकल्यावर chat मधील **📂 फाइल्स पुन्हा वाचा** दाबा.
 
 ## Folder रचना
