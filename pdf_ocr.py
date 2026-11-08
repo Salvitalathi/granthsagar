@@ -286,16 +286,21 @@ def slugify(name):
 
 
 # ---------------- मुख्य काम ----------------
+MARATHI_MARKS = ("आहे", "आहेत", "आणि", "नाही", "होते", "म्हणजे", "करावे", "असते", "त्यामुळे", "पाहिजे")
+HINDI_MARKS = ("है", "हैं", "में", "और", "नहीं", "होता", "करना", "चाहिए", "जाता", "किया")
+
+
 def detect_lang(pdf, n, tess, work, progress=print):
-    """मधली 2 पाने hin आणि mar ने वाचून ज्याचा OCR-confidence जास्त ती भाषा"""
+    """मधली 2 पाने वाचून हिंदी की मराठी ते ठरवा.
+    आधी भाषेचे खुणेचे शब्द (आहे/आणि… विरुद्ध है/में…), बरोबरी असेल तर OCR-confidence (हिंदीला थोडे झुकते माप)."""
     pages = sorted({max(1, n // 3), max(1, (2 * n) // 3)})
-    score = {}
+    conf, words = {}, {}
     for lang in ("hin", "mar"):
         try:
             tessdata = ensure_lang(tess, lang)
         except OCRSetupError:
             continue
-        confs = []
+        confs, ws = [], []
         for p in pages:
             png = render_page(pdf, p, os.path.join(work, f"lang{p}.png"), 200)
             if not png:
@@ -306,17 +311,31 @@ def detect_lang(pdf, n, tess, work, progress=print):
             for row in run(cmd).stdout.splitlines()[1:]:
                 c = row.split("\t")
                 if len(c) == 12 and DEVA.search(c[11]):
+                    ws.append(c[11].strip(" ।,.;:!?\"'"))
                     try:
                         confs.append(float(c[10]))
                     except ValueError:
                         pass
-        score[lang] = sum(confs) / len(confs) if confs else 0.0
+        conf[lang] = sum(confs) / len(confs) if confs else 0.0
+        words[lang] = ws
     for f in glob.glob(os.path.join(work, "lang*.png")):
         os.remove(f)
-    if not score:
+    if not conf:
         raise OCRSetupError("हिंदी/मराठी OCR भाषा उपलब्ध नाही (इंटरनेट चालू ठेवून पुन्हा प्रयत्न करा).")
-    best = max(score, key=score.get)
-    progress(f"🔤 भाषा ओळखली: {LANGS[best]} ({', '.join(f'{k} {v:.0f}' for k, v in score.items())})")
+    if len(conf) == 1:
+        best = next(iter(conf))
+    else:
+        all_words = words.get("hin", []) + words.get("mar", [])
+        mr = sum(all_words.count(w) for w in MARATHI_MARKS)
+        hi = sum(all_words.count(w) for w in HINDI_MARKS)
+        if mr + hi >= 4 and max(mr, hi) >= 2 * min(mr, hi):
+            best = "mar" if mr > hi else "hin"
+        else:                                   # संस्कृत/मिश्र — confidence, पण मराठीला ३ गुण जास्त हवेत
+            best = "mar" if conf.get("mar", 0) > conf.get("hin", 0) + 3 else "hin"
+        progress(f"🔤 भाषा ओळखली: {LANGS[best]} (खुणा: मराठी {mr}, हिंदी {hi}; "
+                 f"confidence: {', '.join(f'{k} {v:.0f}' for k, v in conf.items())})")
+        return best
+    progress(f"🔤 भाषा: {LANGS[best]}")
     return best
 
 
