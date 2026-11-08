@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       model:
-        description: "Chat model"
-        default: "qwen2.5:7b"
+        description: "Chat model (auto = RAM नुसार)"
+        default: "auto"
       folders:
         description: "granth/ मधील कोणते folders वापरायचे (space ने वेगळे)"
         default: "atharvaveda sushruta charaka"
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      GS_CHAT_MODEL: ${{ github.event.inputs.model || 'qwen2.5:7b' }}
+      MODEL_IN: ${{ github.event.inputs.model || 'auto' }}
       GS_EMBED_MODEL: bge-m3
       FOLDERS: ${{ github.event.inputs.folders || 'atharvaveda sushruta charaka' }}
       GS_DOCS: ${{ github.workspace }}/ci_granth
@@ -30,6 +30,10 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install numpy
+      - name: Pick model
+        run: |
+          if [ "$MODEL_IN" = auto ]; then m=$(python granthsagar.py --print-model); else m=$MODEL_IN; fi
+          echo "GS_CHAT_MODEL=$m" >> "$GITHUB_ENV"; echo "model: $m"; free -g | head -2
 
       - name: Select texts
         run: |

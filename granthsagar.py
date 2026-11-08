@@ -19,7 +19,28 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 # MODE = "granth" -> ग्रंथांचा अर्थ मराठीत समजावणे + आरोग्य सुरक्षितता; "general" -> साधा मदतनीस
 MODE = os.environ.get("GS_MODE", "granth")
 # अर्थ नीट समजण्यासाठी 7B चांगला (8 GB RAM असेल तर "qwen2.5:3b" ठेवा)
-CHAT_MODEL = os.environ.get("GS_CHAT_MODEL", "qwen2.5:7b")
+def total_ram_gb():
+    """संगणकाची एकूण RAM (GB) — Windows, Linux, Mac"""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = MS(); m.dwLength = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return m.ullTotalPhys / 2 ** 30
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2 ** 30
+    except Exception:
+        return 8.0
+
+
+# 12 GB पेक्षा कमी RAM असेल तर लहान (3B) मॉडेल, नाहीतर 7B — हवे तर GS_CHAT_MODEL ने बदला
+CHAT_MODEL = os.environ.get("GS_CHAT_MODEL") or ("qwen2.5:7b" if total_ram_gb() >= 12 else "qwen2.5:3b")
 EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
@@ -32,7 +53,8 @@ CHUNK = 800        # एका तुकड्यात किती अक्�
 OVERLAP = 150      # तुकड्यांमध्ये किती अक्षरे सामायिक
 TOP_K = 5          # प्रत्येक प्रश्नासाठी किती तुकडे AI ला द्यायचे
 MIN_SCORE = 0.35   # यापेक्षा कमी जुळणारे तुकडे सोडून द्या
-NUM_CTX = 8192     # मॉडेलची context window
+NUM_CTX = 4096     # मॉडेलची context window (जास्त = जास्त RAM)
+NUM_PREDICT = 900  # उत्तराची कमाल लांबी (tokens)
 
 SYSTEM_PROMPT = """तू "ग्रंथसागर" आहेस — एक मदतनीस सहाय्यक. वापरकर्ता ज्या भाषेत विचारेल त्याच भाषेत उत्तर दे (सहसा मराठी).
 जर खाली "संदर्भ" दिला असेल, तर उत्तर मुख्यतः त्यावरूनच दे आणि कोणत्या फाइलमधून माहिती घेतली ते [फाइलचे नाव] असे सांग.
@@ -213,12 +235,13 @@ def rebuild_vecs():
         for c in info["chunks"]:
             vec = c["vec"]
             v.append((name, c["text"], vec, math.sqrt(sum(x * x for x in vec)) or 1.0))
-    VECS = v
     if np is not None and v:
         m = np.array([x[2] for x in v], dtype=np.float32)
         MAT = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-8)
+        v = [(name, text, None, 1.0) for name, text, _, _ in v]   # duplicate lists नकोत
     else:
         MAT = None
+    VECS = v
 
 
 def build_index(log=print):
@@ -420,7 +443,8 @@ def answer_events(question, history=()):
                [{"role": "user", "content": user_msg}]
     try:
         resp = ollama_post("/api/chat", {"model": CHAT_MODEL, "messages": messages, "stream": True,
-                                         "options": {"num_ctx": NUM_CTX, "temperature": 0.3}},
+                                         "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT,
+                                                     "temperature": 0.3}},
                            stream=True)
         with resp:
             for line in resp:
@@ -460,6 +484,8 @@ def main():
             stream.reconfigure(encoding="utf-8")   # Windows console मध्ये मराठी दिसावे
         except Exception:
             pass
+    if "--print-model" in sys.argv:     # start.bat साठी
+        print(CHAT_MODEL); return
     if "--index" in sys.argv:           # फक्त ग्रंथ वाचणे (embedding), chat नाही
         load_index()
         nf, nc = build_index(lambda m: print(m, flush=True))
