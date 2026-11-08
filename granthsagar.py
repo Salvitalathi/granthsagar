@@ -491,7 +491,7 @@ def pending_zips():
     for base in (PDF_INBOX, DOCS_DIR):
         if os.path.isdir(base):
             for root, dirs, files in os.walk(base):
-                dirs[:] = [d for d in dirs if d != "done"]
+                dirs[:] = [d for d in dirs if d not in ("done", "failed")]
                 out += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(".zip")]
     return out
 
@@ -532,9 +532,44 @@ def pending_pdfs():
         if not os.path.isdir(base):
             continue
         for root, dirs, files in os.walk(base):
-            dirs[:] = [d for d in dirs if d != "done"]
+            dirs[:] = [d for d in dirs if d not in ("done", "failed")]
             out += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(".pdf")]
     return out
+
+
+FAIL_COUNT = {}
+
+
+def file_is_stable(path, wait=3):
+    """copy/download चालू असेल तर आकार बदलतो — तो स्थिर आहे का"""
+    try:
+        a = os.path.getsize(path); time.sleep(wait); b = os.path.getsize(path)
+        return a == b and a > 0
+    except OSError:
+        return False
+
+
+def move_aside(pdf, sub, note=None):
+    """PDF ला pdf_inbox/<sub>/ मध्ये हलवा (done किंवा failed). कारण .txt मध्ये."""
+    dest_dir = os.path.join(PDF_INBOX, sub)
+    os.makedirs(dest_dir, exist_ok=True)
+    target = os.path.join(dest_dir, os.path.basename(pdf))
+    if os.path.exists(target):
+        target = os.path.join(dest_dir, f"{int(time.time())}_{os.path.basename(pdf)}")
+    shutil.move(pdf, target)
+    if os.path.exists(pdf + ".json"):
+        os.remove(pdf + ".json")
+    if note:
+        with open(target + ".कारण.txt", "w", encoding="utf-8") as f:
+            f.write(note + "\n")
+    parent = os.path.dirname(pdf)                       # zip मधून आलेले रिकामे folders साफ
+    while os.path.abspath(parent).startswith(os.path.abspath(PDF_INBOX) + os.sep):
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)
+    return target
 
 
 def start_ocr():
@@ -551,41 +586,51 @@ def start_ocr():
         def log(m):
             print(m, flush=True)
             OCR_STATUS["msg"] = m.strip()
+        tried, failed = set(), []
         try:
             while True:
-                todo = pending_pdfs()
+                todo = [p for p in pending_pdfs() if p not in tried]
                 if not todo:
                     break
                 pdf = todo[0]
+                tried.add(pdf)
+                if not file_is_stable(pdf):
+                    log(f"⏳ {os.path.basename(pdf)} अजून copy होत आहे — थोड्या वेळाने घेतो")
+                    continue
                 meta = {}
                 if os.path.exists(pdf + ".json"):
                     with open(pdf + ".json", encoding="utf-8") as f:
                         meta = json.load(f)
                 name = meta.get("name") or os.path.splitext(os.path.basename(pdf))[0].replace("_", " ")
-                with OCR_LOCK:
-                    pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "auto"), progress=log)
-                # मूळ PDF बाजूला ठेवा (परत OCR होऊ नये)
-                done = os.path.join(PDF_INBOX, "done")
-                os.makedirs(done, exist_ok=True)
-                target = os.path.join(done, os.path.basename(pdf))
-                if os.path.exists(target):
-                    target = os.path.join(done, f"{int(time.time())}_{os.path.basename(pdf)}")
-                shutil.move(pdf, target)
-                parent = os.path.dirname(pdf)          # zip मधून आलेले रिकामे folders साफ
-                while os.path.abspath(parent).startswith(os.path.abspath(PDF_INBOX) + os.sep):
-                    try:
-                        os.rmdir(parent)
-                    except OSError:
-                        break
-                    parent = os.path.dirname(parent)
-                if os.path.exists(pdf + ".json"):
-                    os.remove(pdf + ".json")
+                try:
+                    with OCR_LOCK:
+                        pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "auto"), progress=log)
+                except pdf_ocr.OCRSetupError:
+                    raise                               # Tesseract/भाषा नाही — फाइल खराब नाही
+                except Exception as e:
+                    why = str(e)
+                    FAIL_COUNT[pdf] = FAIL_COUNT.get(pdf, 0) + 1
+                    # खात्रीने खराब (PdfFileError) किंवा ३ वेळा अपयश -> बाजूला; नाहीतर नंतर पुन्हा प्रयत्न
+                    if isinstance(e, pdf_ocr.PdfFileError) or FAIL_COUNT[pdf] >= 3:
+                        dest = move_aside(pdf, "failed", note=why)
+                        failed.append(os.path.basename(pdf))
+                        log(f"⚠️ {os.path.basename(pdf)}: {why} → {os.path.relpath(dest, HERE)}")
+                    else:
+                        log(f"⚠️ {os.path.basename(pdf)}: {why} — थोड्या वेळाने पुन्हा प्रयत्न "
+                            f"({FAIL_COUNT[pdf]}/3, झालेली पाने जपली आहेत)")
+                    continue
+                move_aside(pdf, "done")
                 OCR_STATUS["done"].append(name)
                 start_indexing()          # तयार मजकूर लगेच वाचायला घ्या
-            OCR_STATUS["msg"] = "✅ सर्व PDF मजकुरात बदलल्या."
+            if failed:
+                OCR_STATUS.update(error=f"{len(failed)} PDF उघडल्या नाहीत: {', '.join(failed)} "
+                                        f"(pdf_inbox\\failed मध्ये कारणासह ठेवल्या)",
+                                  msg=f"⚠️ {len(failed)} PDF अयशस्वी, बाकी तयार")
+            else:
+                OCR_STATUS["msg"] = "✅ सर्व PDF मजकुरात बदलल्या."
         except Exception as e:
             msg = str(e) if pdf_ocr and isinstance(e, pdf_ocr.OCRSetupError) else f"PDF मध्ये अडचण: {e}"
-            OCR_STATUS.update(error=msg, msg="⚠️ " + msg)
+            OCR_STATUS.update(error=msg, msg="⚠️ " + msg, blocked=msg)   # watcher पुन्हा-पुन्हा प्रयत्न करणार नाही
             print("⚠️ " + msg, flush=True)
         finally:
             OCR_STATUS["running"] = False
@@ -629,7 +674,8 @@ def watch_folders():
     while True:
         time.sleep(20)
         try:
-            if pdf_ocr and not OCR_STATUS["running"] and (pending_zips() or pending_pdfs()):
+            if pdf_ocr and not OCR_STATUS["running"] and not OCR_STATUS.get("blocked") \
+                    and (pending_zips() or pending_pdfs()):
                 print("📥 नवीन PDF/zip सापडली — काम सुरू", flush=True)
                 start_ocr()
         except Exception:
@@ -670,6 +716,7 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
  <button onclick="uploadPdfs()">अपलोड</button></div>
  <div id="pmsg"></div>
 </div>
+<div id="prog" hidden style="max-width:900px;margin:10px auto 0;width:calc(100% - 32px);background:#fff4e5;border:1px solid #e9b872;border-radius:10px;padding:10px 14px;font-size:15px"></div>
 <div id="chat"></div>
 <form onsubmit="send();return false"><textarea id="q" placeholder="उदा. चरक संहितेनुसार अपचनावर काय उपाय आहेत? / गायत्री मंत्राचा अर्थ काय? (Enter = पाठवा, Shift+Enter = नवी ओळ)"></textarea><button>पाठवा</button></form>
 <div style="text-align:center;font-size:12px;color:#777;padding:0 0 8px">हा AI अभ्यासासाठी आहे — चुका होऊ शकतात. उपचारापूर्वी प्रमाणित वैद्य/डॉक्टरांचा सल्ला घ्या.</div>
@@ -687,7 +734,12 @@ async function uploadPdfs(){if(!pf.files.length){pmsg.textContent='आधी PDF
  pmsg.textContent=out.join('\n');pf.value='';status()}
 let warned=false,ocrErr='';
 async function status(){try{const r=await (await fetch('/status')).json();
- st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`+(r.ocr?` · ${r.ocr_msg}`:'')+(r.indexing?` · 📖 ${r.progress}`:''):'· Ollama चालू नाही!';
+ st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`:'· Ollama चालू नाही!';
+ const pg=document.getElementById('prog');
+ if(r.ocr||r.indexing){pg.hidden=false;
+  pg.innerHTML=(r.ocr?`📄 <b>PDF मजकूर बनत आहे</b>: ${r.ocr_msg}<br>`:'')+(r.indexing?`📖 <b>ग्रंथ वाचणे</b>: ${r.progress}<br>`:'')+
+   '<small>हे पार्श्वभूमीत चालू आहे — तोपर्यंत आधी वाचलेल्या ग्रंथांवर प्रश्न विचारू शकता. ही खिडकी बंद केली तरी काम चालू राहते; काळी खिडकी (command) बंद करू नका.</small>'}
+ else pg.hidden=true;
  if(r.warn&&!warned){add('sys',r.warn);warned=true}
  if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;add('sys','⚠️ '+r.ocr_error);pmsg.textContent='⚠️ '+r.ocr_error}
  if(!pdfPanel.hidden&&r.ocr)pmsg.textContent=r.ocr_msg;
@@ -756,6 +808,7 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import urlparse, parse_qs
             qs = parse_qs(urlparse(self.path).query)
             try:
+                OCR_STATUS["blocked"] = ""
                 path = save_upload(self.rfile, int(self.headers.get("Content-Length", 0)),
                                    qs.get("file", ["granth.pdf"])[0], qs.get("name", [""])[0],
                                    qs.get("lang", ["auto"])[0])
@@ -765,6 +818,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "msg": f"⚠️ {e}"})
             return
         if self.path == "/reindex":
+            OCR_STATUS["blocked"] = ""            # बटण दाबले — पुन्हा प्रयत्न
             start_ocr()
             started = start_indexing()
             msg = docs_report() + "\n" + ("⏳ वाचन सुरू झाले — प्रगती वरच्या पट्टीत दिसेल. तोपर्यंत प्रश्न विचारू शकता."
@@ -899,6 +953,29 @@ def main():
             stream.reconfigure(encoding="utf-8")   # Windows console मध्ये मराठी दिसावे
         except Exception:
             pass
+    if "--check-setup" in sys.argv:     # start.bat साठी: साधने आहेत का
+        ok = True
+        try:
+            import pypdfium2
+            print(f"✅ pypdfium2 (PDF वाचणे) — आवृत्ती {getattr(getattr(pypdfium2, 'version', None), 'PYPDFIUM_INFO', 'ok')}")
+        except ImportError:
+            print("❌ pypdfium2 नाही — 'python -m pip install pypdfium2 pillow' चालवा"); ok = False
+        try:
+            import PIL  # noqa: F401
+            print("✅ pillow (चित्र)")
+        except ImportError:
+            print("❌ pillow नाही"); ok = False
+        t = pdf_ocr.find_tesseract() if pdf_ocr else None
+        if t:
+            print(f"✅ Tesseract OCR — {t}")
+        else:
+            print("❌ Tesseract OCR नाही — PDF साठी लागेल"); ok = False
+        try:
+            import numpy  # noqa: F401
+            print("✅ numpy (जलद शोध)")
+        except ImportError:
+            print("⚠️ numpy नाही — शोध थोडा हळू होईल")
+        sys.exit(0 if ok else 1)
     if "--print-model" in sys.argv:     # start.bat साठी
         print(CHAT_MODEL); return
     if "--index" in sys.argv:           # फक्त ग्रंथ वाचणे (embedding), chat नाही

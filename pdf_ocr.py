@@ -16,7 +16,7 @@ PDF ग्रंथ -> स्वच्छ मजकूर (ग्रंथसा
        pip install pypdfium2 pillow   (Poppler असेल तर तेही चालते)
 हिंदी/मराठी भाषेची फाइल नसेल तर ती एकदाच इंटरनेटवरून "tessdata" folder मध्ये उतरवली जाते.
 """
-import argparse, contextlib, glob, json, os, re, shutil, subprocess, sys, tempfile, urllib.request, zipfile
+import argparse, contextlib, glob, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.request, zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +27,10 @@ WORD = re.compile(r"[\u0900-\u097F]+")
 LETTERS = re.compile(r"[\u0900-\u094F\u0951-\u0963\u0971-\u097F]+")     # ॐ, दंड, आकडे वगळून
 MANTRA_LINE = re.compile(r"ॐ|नमः|नम:|नमो|स्वाहा|फट्|ह्रीं|क्लीं|श्रीं|ऐं|॥")
 LANGS = {"hin": "हिंदी / संस्कृत", "mar": "मराठी", "san": "संस्कृत (विशेष)"}
+
+
+class PdfFileError(Exception):
+    """ही विशिष्ट PDF फाइल खराब आहे (setup ठीक आहे) — फाइल बाजूला ठेवा, बाकीचे काम चालू ठेवा"""
 
 
 class OCRSetupError(Exception):
@@ -134,16 +138,62 @@ def renderer():
 
 
 # ---------------- PDF वाचणे ----------------
+_PDFIUM_LOCK = threading.RLock()     # PDFium thread-safe नाही — एका वेळी एकच thread
+
+
 @contextlib.contextmanager
 def _pdfium_doc(pdf):
-    """file handle ने उघडा — Windows वर देवनागरी path सुरक्षित"""
+    """file handle ने उघडा (Windows वर देवनागरी path सुरक्षित), आणि lock धरून — समांतर OCR मध्ये
+    एकाच वेळी अनेक threads नी PDFium वापरले तर 'Failed to load page' / 'Data format error' येतात."""
     import pypdfium2 as pdfium
-    fh = open(pdf, "rb")
-    doc = pdfium.PdfDocument(fh)
-    try:
-        yield doc
-    finally:
-        doc.close(); fh.close()
+    with _PDFIUM_LOCK:
+        fh = open(pdf, "rb")
+        try:
+            doc = pdfium.PdfDocument(fh)
+            try:
+                yield doc
+            finally:
+                doc.close()
+        finally:
+            fh.close()
+
+
+def prepare_pdf(pdf, work):
+    """PDF उघडते का ते तपासा; सुरुवातीला कचरा असेल तर दुरुस्त प्रत बनवा. परत: वापरायचा path."""
+    size = os.path.getsize(pdf)
+    if size < 100:
+        raise PdfFileError("फाइल रिकामी/खूप लहान आहे")
+    with open(pdf, "rb") as f:
+        head = f.read(1 << 20)
+        f.seek(max(0, size - 4096))
+        tail = f.read()
+    use = pdf
+    off = head.find(b"%PDF-")
+    if off < 0:
+        if head[:2] == b"PK":
+            raise PdfFileError("ही zip फाइल आहे पण नाव .pdf आहे — नाव बदलून .zip करा")
+        if head.lstrip()[:1] == b"<":
+            raise PdfFileError("ही PDF नाही, web पान (HTML) आहे — download पुन्हा नीट करा")
+        raise PdfFileError("ही PDF फाइल नाही (सुरुवातीला %PDF नाही)")
+    if off > 0:                                     # सुरुवातीला कचरा — तो काढून प्रत
+        use = os.path.join(work, "repaired.pdf")
+        with open(pdf, "rb") as src, open(use, "wb") as dst:
+            src.seek(off); shutil.copyfileobj(src, dst)
+    if renderer() == "pdfium":
+        try:
+            with _pdfium_doc(use) as doc:
+                if len(doc) == 0:
+                    raise PdfFileError("PDF मध्ये एकही पान नाही")
+        except PdfFileError:
+            raise
+        except Exception as e:
+            msg = str(e)
+            if "password" in msg.lower():
+                raise PdfFileError("PDF ला password आहे — password काढून पुन्हा टाका")
+            if b"%%EOF" not in tail:
+                raise PdfFileError("PDF अर्धवट आहे (download/copy पूर्ण झाले नाही) — फाइल पुन्हा download करा")
+            raise PdfFileError(f"PDF उघडता आली नाही, फाइल खराब असावी ({msg})")
+    return use
 
 
 def page_count(pdf):
@@ -373,13 +423,15 @@ def extract_zip(path, dest, depth=0):
 
 def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=False, progress=print):
     """PDF -> out_dir/<slug>/part_XX.txt. परत: (पाने, output folder)"""
-    jobs = jobs or max(1, (os.cpu_count() or 2) - 1)
-    n = page_count(pdf)
-    if n == 0:
-        raise OCRSetupError("ही PDF उघडता आली नाही (खराब किंवा password असलेली?).")
+    # कमाल 4 समांतर: chat मॉडेल (12B ~8 GB) सोबत RAM पुरावी. GS_OCR_JOBS ने बदलता येते.
+    jobs = jobs or int(os.environ.get("GS_OCR_JOBS", 0)) or max(1, min(4, (os.cpu_count() or 2) - 1))
     slug = slugify(name)
     work = os.path.join(tempfile.gettempdir(), "granth_ocr", slug)
     os.makedirs(work, exist_ok=True)
+    pdf = prepare_pdf(pdf, work)                      # खराब असेल तर PdfFileError (कारणासह)
+    n = page_count(pdf)
+    if n == 0:
+        raise PdfFileError("ही PDF उघडता आली नाही")
 
     if not force_ocr and text_layer_ok(pdf, n):
         progress(f"📄 {name}: PDF मध्ये चांगला मजकूर आहे — OCR ची गरज नाही")
@@ -405,7 +457,15 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
             txt = os.path.join(work, f"p{p:05d}.txt")
             if os.path.exists(txt):
                 return
-            png = render_page(pdf, p, os.path.join(work, f"img{p:05d}.png"), dpi)
+            png = None
+            for attempt in range(3):                   # पान कधी अपयशी झाले तर पुन्हा प्रयत्न
+                try:
+                    png = render_page(pdf, p, os.path.join(work, f"img{p:05d}.png"), dpi)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        progress(f"⚠️ {name}: पान {p} वाचता आले नाही ({e}) — ते सोडून पुढे")
+                    time.sleep(1)
             text = ""
             if png:
                 cmd = [tess, png, "stdout", "-l", lang, "--psm", "3"]
@@ -419,10 +479,15 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
 
         done = len(glob.glob(os.path.join(work, "p*.txt")))
         progress(f"🔍 {name}: {n} पाने OCR ({jobs} समांतर){f', आधी झालेली {done}' if done else ''}")
+        t0, new = time.time(), 0
         with ThreadPoolExecutor(jobs) as ex:
             for i, _ in enumerate(ex.map(one, range(1, n + 1)), 1):
-                if i % 10 == 0 or i == n:
-                    progress(f"🔍 {name}: {i}/{n} पाने")
+                if i > done:
+                    new += 1
+                if i % 5 == 0 or i == n:
+                    rate = new / max(time.time() - t0, 1e-6)
+                    left = (n - i) / rate / 60 if rate > 0 else 0
+                    progress(f"🔍 {name}: {i}/{n} पाने" + (f", उरलेला वेळ ~{left:.0f} मिनिटे" if i < n else ""))
 
     # भागांत लिहा (प्रत्येक ~150 KB), प्रत्येक पानाला शीर्षक
     dest = os.path.join(out_dir, slug)
