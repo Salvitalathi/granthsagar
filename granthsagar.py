@@ -305,6 +305,7 @@ def build_index(log=print):
         INDEX["files"][name] = {"sha1": digest, "chunks": [
             {"text": t, "vec": [round(x, 5) for x in v]} for t, v in zip(chunks, vecs)]}
         save()   # प्रत्येक फाइलनंतर save — मध्येच बंद पडले तरी केलेले काम राहते
+        rebuild_vecs()   # वाचलेले भाग लगेच शोधासाठी उपलब्ध
         changed = False
     if changed:
         save()
@@ -404,13 +405,73 @@ def search(query):
     return direct or [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE]
 
 
+
+# ===================== Folder तपासणी + पार्श्वभूमीत वाचन =====================
+INDEX_STATUS = {"running": False, "msg": ""}
+
+
+def docs_report():
+    """ग्रंथसागर कोणता folder वाचतो, त्यात काय आहे, आणि चुकीच्या ठिकाणी काही आहे का"""
+    lines = [f"📂 ग्रंथ folder: {DOCS_DIR}"]
+    counts = {}
+    zips = []
+    for root, _, files in os.walk(DOCS_DIR):
+        for fn in files:
+            rel = os.path.relpath(os.path.join(root, fn), DOCS_DIR)
+            top = rel.split(os.sep)[0] if os.sep in rel else "(मुख्य)"
+            if fn.lower().endswith(SUPPORTED):
+                counts[top] = counts.get(top, 0) + 1
+            elif fn.lower().endswith(".zip"):
+                zips.append(rel)
+    for top, n in sorted(counts.items()):
+        lines.append(f"   • {top}: {n} फाइल्स")
+    if not counts:
+        lines.append("   (इथे एकही .txt/.pdf/.docx फाइल नाही)")
+    for z in zips:
+        lines.append(f"⚠️ {z} ही zip अजून extract केलेली नाही — तिच्यावर right-click → Extract All करा")
+    # नेहमीची चूक: granth च्या बाहेर बनवलेला folder
+    for name in os.listdir(HERE):
+        p = os.path.join(HERE, name)
+        if os.path.isdir(p) and os.path.abspath(p) != os.path.abspath(DOCS_DIR) and \
+                name.lower() not in ("scripts", "tests", "tiny_ai", ".git", ".github", ".cache", "__pycache__"):
+            n = sum(f.lower().endswith(".txt") for _, _, fs in os.walk(p) for f in fs)
+            if n:
+                lines.append(f"⚠️ '{name}' folder मध्ये {n} फाइल्स आहेत, पण तो 'granth' च्या बाहेर आहे — "
+                             f"तो 'granth' folder च्या आत हलवा")
+    return "\n".join(lines)
+
+
+def start_indexing():
+    """पार्श्वभूमीत ग्रंथ वाचणे — chat चालू राहतो"""
+    if INDEX_STATUS["running"]:
+        return False
+
+    def work():
+        INDEX_STATUS.update(running=True, msg="फाइल्स तपासत आहे…")
+        def log(m):
+            print(m, flush=True)
+            INDEX_STATUS["msg"] = m.strip()
+        try:
+            with LOCK:
+                nf, nc = build_index(log)
+            INDEX_STATUS["msg"] = f"✅ {nf} फाइल्स, {nc} तुकडे तयार."
+        except Exception as e:
+            INDEX_STATUS["msg"] = f"⚠️ फाइल्स वाचताना अडचण: {e}"
+            print(INDEX_STATUS["msg"], flush=True)
+        finally:
+            INDEX_STATUS["running"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
 # ===================== Web chat =====================
 PAGE = r"""<!DOCTYPE html><html lang="mr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ग्रंथसागर</title><style>
 *{box-sizing:border-box}body{margin:0;font-family:"Nirmala UI","Noto Sans Devanagari","Mangal",system-ui,sans-serif;background:#f4f1ea;color:#222;display:flex;flex-direction:column;height:100vh}
 header{background:#1f4e5f;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px}
-header h1{font-size:20px;margin:0;flex:1}header small{opacity:.8}
+header h1{font-size:20px;margin:0;flex:1}header small{opacity:.8;font-size:13px}
 button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:#e07a2f;color:#fff}
 button.ghost{background:transparent;border:1px solid #fff8}
 #chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;max-width:900px;width:100%;margin:0 auto}
@@ -432,7 +493,11 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
 <script>
 const chat=document.getElementById('chat'),q=document.getElementById('q'),st=document.getElementById('st');let hist=[],busy=false;
 function add(cls,t){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=1e9;return d}
-async function status(){try{const r=await (await fetch('/status')).json();st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स`:'· Ollama चालू नाही!';if(r.warn)add('sys',r.warn)}catch(e){st.textContent='· server बंद'}}
+let warned=false;
+async function status(){try{const r=await (await fetch('/status')).json();
+ st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`+(r.indexing?` · 📖 ${r.progress}`:''):'· Ollama चालू नाही!';
+ if(r.warn&&!warned){add('sys',r.warn);warned=true}
+ setTimeout(status,r.indexing?5000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
 async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
@@ -485,19 +550,16 @@ class Handler(BaseHTTPRequestHandler):
                     warn = "हे मॉडेल्स नाहीत, terminal मध्ये चालवा: " + "  ".join(f"ollama pull {m}" for m in missing)
             else:
                 warn = "Ollama चालू नाही. Ollama app सुरू करा, मग हे पान refresh करा."
-            self._json({"ok": ok, "model": CHAT_MODEL, "files": len(INDEX["files"]), "warn": warn})
+            self._json({"ok": ok, "model": CHAT_MODEL, "files": len(INDEX["files"]), "chunks": len(VECS),
+                        "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"]})
         else:
             self.send_error(404)
 
     def do_POST(self):
         if self.path == "/reindex":
-            logs = []
-            try:
-                with LOCK:
-                    nf, nc = build_index(logs.append)
-                msg = f"✅ {nf} फाइल्स, {nc} तुकडे तयार." + ("\n" + "\n".join(logs) if logs else " (काही बदल नाही)")
-            except Exception as e:
-                msg = f"⚠️ फाइल्स वाचताना अडचण: {e}"
+            started = start_indexing()
+            msg = docs_report() + "\n" + ("⏳ वाचन सुरू झाले — प्रगती वरच्या पट्टीत दिसेल. तोपर्यंत प्रश्न विचारू शकता."
+                                          if started else "⏳ वाचन आधीच चालू आहे.")
             self._json({"msg": msg})
         elif self.path == "/ask":
             self.answer(self._body())
@@ -644,13 +706,10 @@ def main():
         print(f"⚠️  Ollama ({OLLAMA}) चालू नाही. Ollama सुरू करा — chat पान तरी उघडेल.")
     load_index()
     rebuild_vecs()
+    print(docs_report())
     if ok:
-        print(f"📂 '{DOCS_DIR}' मधील फाइल्स वाचत आहे…")
-        try:
-            nf, nc = build_index()
-            print(f"✅ {nf} फाइल्स, {nc} तुकडे तयार.")
-        except Exception as e:
-            print(f"⚠️  फाइल्स वाचता आल्या नाहीत: {e}\n    'ollama pull {EMBED_MODEL}' केले आहे का?")
+        print("📖 नवीन/बदललेले ग्रंथ पार्श्वभूमीत वाचत आहे — chat लगेच वापरता येईल.")
+        start_indexing()
     url = f"http://127.0.0.1:{PORT}"
     print(f"🌐 {url}  (बंद करण्यासाठी Ctrl+C)")
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
