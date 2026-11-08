@@ -37,6 +37,21 @@ check("संदर्भ क्रमांक", "[अथर्ववेद (�
 check("header काढला", "header" not in out)
 check("इंग्रजी ओळ तशीच", "The thrice-seven" in out)
 
+# ---- 2b. ग्रंथसागर: थेट शोध, शब्द, पुनरावृत्ती ----
+import glob
+import granthsagar as gs
+gs.VECS = [(f, t, None, 1.0) for f in sorted(glob.glob(os.path.join(ROOT, "granth", "*", "*.txt")))
+           for t in gs.chunk_text(open(f, encoding="utf-8").read())]
+if gs.VECS:
+    r = gs.direct_lookup("अथर्ववेदाच्या पहिल्या सूक्ताचा (१.१) अर्थ सांगा")
+    check("थेट शोध: अथर्ववेद १.१", r and r[0][2].startswith("[अथर्ववेद 1.1]"))
+    r = gs.direct_lookup("सुश्रुत सूत्रस्थान १५ मध्ये स्वस्थ कोणाला म्हणतात?")
+    check("थेट शोध: सुश्रुत सू. १५ (स्वस्थ असलेला तुकडा आधी)", r and "समदोष" in r[0][2])
+check("शब्द: तक्मन् -> तक्म", ["तक्मन", "तक्म"] in gs.keywords("अथर्ववेदात तक्मन् वरील मंत्र"))
+check("पुनरावृत्ती ओळखली", gs.is_looping("ही एक लांब ओळ आहे जी पुन्हा पुन्हा येते आणि थांबत नाही, अजिबात नाही.\n" * 4))
+check("साधे उत्तर पुनरावृत्ती नाही", not gs.is_looping(open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()[:2000]))
+check("स्थान मराठीत", gs.mr_refs("[सुश्रुत संहिता Sū. 15]") == "[सुश्रुत संहिता सूत्रस्थान 15]")
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)
@@ -67,7 +82,10 @@ try:
     check("docx संदर्भ सापडला", any(e["type"] == "sources" and "notes.docx" in e["sources"] for e in ev))
     check("साध्या प्रश्नाला alert नाही", "alert" not in types)
     ev = ask("आईच्या छातीत दुखत आहे, काय करू?")
-    check("गंभीर लक्षणाला alert", any(e["type"] == "alert" for e in ev))
+    check("आपत्कालीन: alert", any(e["type"] == "alert" for e in ev))
+    check("आपत्कालीन: AI उपाय नाही, ठरलेले उत्तर", "".join(e.get("t", "") for e in ev) == gs.EMERGENCY_ANSWER)
+    ev = ask("गरोदर स्त्रीने अपचनात काय आहार घ्यावा?")
+    check("सावधगिरी: alert + उत्तर", any(e["type"] == "alert" for e in ev) and any(e["type"] == "token" for e in ev))
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:

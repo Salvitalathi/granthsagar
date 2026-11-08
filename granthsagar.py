@@ -76,22 +76,44 @@ GRANTH_PROMPT = """तू "ग्रंथसागर" आहेस — वे�
 - मंत्र-तंत्र (इंद्रजाल, अथर्ववेदातील अभिचार इ.): मंत्राचा अर्थ, परंपरा आणि ऐतिहासिक संदर्भ समजाव. पण धोतरा, कुचला, पारा यांसारखे विषारी पदार्थ खाऊ घालण्याची किंवा वापरण्याची कृती, किंवा कोणाला इजा पोहोचवण्याची प्रत्यक्ष पद्धत सांगू नकोस."""
 
 # गंभीर लक्षणे — यांपैकी काही दिसले तर उत्तराआधी लाल सूचना दाखवली जाते
-RED_FLAGS = [
-    "छातीत दुख", "छाती दुख", "श्वास घ्यायला", "दम लाग", "धाप", "बेशुद्ध", "शुद्ध हरप", "झटके", "फिट",
-    "अर्धांग", "लकवा", "तोंड वाकड", "रक्ताची उलटी", "रक्त उलटी", "शौचातून रक्त", "काळी शौच",
-    "खूप रक्तस्त्राव", "विषबाधा", "विष प्या", "साप चाव", "विंचू", "भाजल", "अपघात", "डोक्याला मार",
-    "तीव्र पोटदुख", "असह्य", "102", "103", "104", "तीन दिवस ताप", "३ दिवस ताप",
-    "गर्भवती", "गरोदर", "बाळ", "नवजात", "आत्महत्या", "जीव द्याव",
-    "chest pain", "breath", "unconscious", "seizure", "stroke", "bleeding", "poison", "pregnan", "suicide",
+# आपत्कालीन लक्षणे — AI उपाय सांगत नाही, फक्त डॉक्टरांकडे जाण्याची सूचना
+EMERGENCY = [
+    "छातीत दुख", "छाती दुख", "छातीत कळ", "श्वास घ्यायला", "श्वास लाग", "दम लाग", "धाप", "बेशुद्ध",
+    "शुद्ध हरप", "झटके", "फिट येत", "अर्धांग", "लकवा", "तोंड वाकड", "रक्ताची उलटी", "रक्त उलटी",
+    "शौचातून रक्त", "काळी शौच", "खूप रक्तस्त्राव", "रक्तस्त्राव थांबत", "विषबाधा", "विष प्य", "विष खा",
+    "साप चाव", "सर्पदंश", "विंचू", "भाजल", "अपघात", "डोक्याला मार", "तीव्र पोटदुख", "असह्य",
+    "आत्महत्या", "जीव द्याव", "chest pain", "can't breathe", "unconscious", "seizure", "stroke",
+    "poison", "snake bite", "suicide",
 ]
-RED_FLAG_MSG = ("⚠️ तुम्ही सांगितलेली लक्षणे गंभीर असू शकतात. घरगुती उपायांवर वेळ घालवू नका — "
-                "लगेच डॉक्टरांना दाखवा किंवा जवळच्या दवाखान्यात जा. आपत्कालीन स्थितीत 108 वर फोन करा.")
+# सावधगिरी — AI उत्तर देतो, पण आधी सूचना
+CAUTION = ["गर्भवती", "गरोदर", "बाळ", "नवजात", "लहान मुल", "102", "103", "104", "तीन दिवस ताप",
+           "३ दिवस ताप", "pregnan", "infant", "बीपी", "मधुमेह", "साखरेच", "रक्त पातळ"]
+EMERGENCY_MSG = ("⚠️ तुम्ही सांगितलेली लक्षणे आपत्कालीन असू शकतात. अशा वेळी ग्रंथातील किंवा घरगुती उपाय करू नका — "
+                 "लगेच डॉक्टरांना दाखवा किंवा जवळच्या दवाखान्यात जा. आपत्कालीन स्थितीत 108 वर फोन करा.")
+EMERGENCY_ANSWER = ("ग्रंथसागर अशा आपत्कालीन लक्षणांवर उपाय सांगत नाही, कारण इथे एक-एक मिनिट महत्त्वाचा असतो.\n\n"
+                    "• रुग्णाला शांत बसवा/झोपवा, एकटे सोडू नका.\n"
+                    "• 108 (रुग्णवाहिका) वर फोन करा किंवा लगेच जवळच्या रुग्णालयात न्या.\n"
+                    "• डॉक्टरांनी आधी दिलेली औषधे असतील तर ती डॉक्टरांना दाखवा.\n\n"
+                    "धोका टळल्यानंतर आयुर्वेदातील आहार-विहाराबद्दल अभ्यास म्हणून विचारू शकता.")
+CAUTION_MSG = ("⚠️ गर्भवती स्त्रिया, लहान मुले, जास्त ताप किंवा आधीपासून औषधे (BP/साखर इ.) घेणारे — "
+               "यांच्यासाठी कोणताही उपाय करण्यापूर्वी डॉक्टर/वैद्यांचा सल्ला नक्की घ्या.")
+
+
+def _has(text, words):
+    t = text.lower()
+    return any(w.lower() in t for w in words)
 
 
 def red_flag(text):
-    t = text.lower()
-    return any(k.lower() in t for k in RED_FLAGS)
+    return _has(text, EMERGENCY)
 
+
+RED_FLAG_MSG = EMERGENCY_MSG   # जुन्या नावासाठी
+
+
+MARATHI_REMINDER = ("\n\n(सूचना: उत्तर फक्त शुद्ध मराठीत लिहा — 'है', 'हैं', 'का', 'की', 'में', 'किया', "
+                    "'इस प्रकार' असे हिंदी शब्द वापरू नका. एकच वाक्य पुन्हा लिहू नका. "
+                    "संदर्भात नसलेला श्लोक किंवा क्रमांक बनवू नका. श्लोक उद्धृत करताना संदर्भातील देवनागरी जसाच्या तसा घ्या.)")
 
 SUPPORTED = (".txt", ".md", ".csv", ".pdf", ".docx")
 
@@ -288,22 +310,95 @@ def build_index(log=print):
     return len(INDEX["files"]), len(VECS)
 
 
+# ===================== थेट श्लोक-शोध आणि शब्द-जुळणी =====================
+DEVA_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+GRANTH_NAMES = [("अथर्व", "अथर्ववेद"), ("सुश्रुत", "सुश्रुत संहिता"), ("चरक", "चरक संहिता")]
+STHANA = {"सूत्र": "Sū.", "निदान": "Nid.", "शारीर": "Śār.", "चिकित्सा": "Cik.", "कल्प": "Ka.",
+          "उत्तर": "Utt.", "विमान": "Vim.", "इंद्रिय": "Indr.", "इन्द्रिय": "Indr.", "सिद्धि": "Si."}
+STHANA_MR = {"Sū.": "सूत्रस्थान", "Nid.": "निदानस्थान", "Śār.": "शारीरस्थान", "Cik.": "चिकित्सास्थान",
+             "Ka.": "कल्पस्थान", "Utt.": "उत्तरतंत्र", "Vim.": "विमानस्थान", "Indr.": "इंद्रियस्थान",
+             "Si.": "सिद्धिस्थान"}
+STOP = set("""काय कोणते कोणता कोणती कोणत्या आहेत आहे आणि किंवा त्यांचा त्यांची त्याचा त्याची अर्थ मराठीत सांगा
+सांगावे होण्यासाठी कोणाला म्हणतात किती प्रमाणात घ्यावा घ्यावी माझ्या माझे माझी उपाय सांगितले पहिल्या
+कसा कशी कसे काही याचा यांचा मध्ये मधील नुसार साठी करावे करावा द्या आम्हाला मला बरा मंत्र व्यक्ती ग्रंथात
+श्लोक सूक्त अध्याय""".split())
+MATRA = "\u093e\u093f\u0940\u0941\u0942\u0943\u0944\u0947\u0948\u094b\u094c\u094d\u0902\u0903\u0901"
+
+
+def mr_refs(text):
+    """Sū. 15 -> सूत्रस्थान 15 (AI ला समजावे म्हणून)"""
+    for ab, mr in STHANA_MR.items():
+        text = text.replace(f" {ab} ", f" {mr} ")
+    return text
+
+
+def direct_lookup(question):
+    """'अथर्ववेद 1.1' / 'सुश्रुत सूत्रस्थान १५' -> त्या सूक्त/अध्यायाचे तुकडे"""
+    q = question.translate(DEVA_DIGITS)
+    name = next((full for key, full in GRANTH_NAMES if key in q), None)
+    m = re.search(r"(\d+)\s*[.:]\s*(\d+)|(\d+)", q)
+    if not name or not m:
+        return []
+    if name == "अथर्ववेद":
+        if not m.group(1):
+            return []
+        head = f"[अथर्ववेद {int(m.group(1))}.{int(m.group(2))}"
+    else:
+        ab = next((v for k, v in STHANA.items() if k in q), None)
+        if not ab:
+            return []
+        num = m.group(1) or m.group(3)
+        head = f"[{name} {ab} {int(num)}"
+    found = [(name_, text) for name_, text, _, _ in VECS
+             if text.startswith(head + "]") or (name == "चरक संहिता" and text.startswith(head + " "))]
+    keys = keywords(question)
+    if keys:   # लांब अध्याय: प्रश्नातील शब्द असलेले तुकडे आधी
+        found.sort(key=lambda x: -sum(any(k in x[1] for k in alts) for alts in keys))
+    return [(1.0, n, t) for n, t in found[:3]]
+
+
+def keywords(question):
+    """प्रश्नातील ग्रंथ-शब्द, प्रत्येकी [रूप, पर्यायी मूळ रूप]: तक्मन् -> [तक्मन, तक्म]"""
+    keys = []
+    for w in re.findall(r"[\u0900-\u097F]{3,}", question):
+        if w in STOP or any(k in w for k, _ in GRANTH_NAMES) or w.endswith("नुसार"):
+            continue
+        base = w.rstrip(MATRA)
+        if len(base) < 3:
+            continue
+        alts = [base]
+        if len(base) >= 5 and base[-1] in "नमतसरय":
+            alts.append(base[:-1].rstrip(MATRA))
+        if alts not in keys:
+            keys.append(alts)
+    return keys
+
+
 def search(query):
     if not VECS:
         return []
+    direct = direct_lookup(query)
     q = embed([query])[0]
+    keys = keywords(query)
     if MAT is not None:
         qv = np.array(q, dtype=np.float32); qv /= max(float(np.linalg.norm(qv)), 1e-8)
         sims = MAT @ qv
+        if keys:   # ग्रंथातील नेमका शब्द (उदा. तक्मन्, स्वस्थ) असलेल्या तुकड्यांना थोडे झुकते माप
+            boost = np.array([min(0.12, 0.04 * sum(any(k in t for k in alts) for alts in keys))
+                              for _, t, _, _ in VECS],
+                             dtype=np.float32)
+            sims = sims + boost
         top = np.argsort(-sims)[:TOP_K]
-        return [(float(sims[i]), VECS[i][0], VECS[i][1]) for i in top if sims[i] >= MIN_SCORE]
+        hits = [(float(sims[i]), VECS[i][0], VECS[i][1]) for i in top if sims[i] >= MIN_SCORE]
+        seen = {t for _, _, t in direct}
+        return (direct + [h for h in hits if h[2] not in seen])[:TOP_K + len(direct)]
     qn = math.sqrt(sum(x * x for x in q)) or 1.0
     scored = []
     for name, text, vec, n in VECS:
-        s = sum(a * b for a, b in zip(q, vec)) / (qn * n)
+        s = sum(a * b for a, b in zip(q, vec)) / (qn * n) + min(0.12, 0.04 * sum(any(k in text for k in alts) for alts in keys))
         scored.append((s, name, text))
     scored.sort(reverse=True)
-    return [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE]
+    return (direct + [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE])[:TOP_K + len(direct)]
 
 
 # ===================== Web chat =====================
@@ -432,20 +527,31 @@ def answer_events(question, history=()):
         yield {"type": "error", "msg": f"फाइल्स शोधता आल्या नाहीत ({e}) — सामान्य उत्तर देत आहे."}
     yield {"type": "sources", "sources": list(dict.fromkeys(name for _, name, _ in hits))}
     if MODE == "granth" and red_flag(question):
-        yield {"type": "alert", "msg": RED_FLAG_MSG}
+        # आपत्कालीन लक्षणे: AI कडून उपाय नाही — ठरलेला सुरक्षित संदेश
+        yield {"type": "alert", "msg": EMERGENCY_MSG}
+        yield {"type": "token", "t": EMERGENCY_ANSWER}
+        yield {"type": "done"}
+        return
+    if MODE == "granth" and _has(question, CAUTION):
+        yield {"type": "alert", "msg": CAUTION_MSG}
     if hits:
-        ctx = "\n\n".join(f"[{name}]\n{text}" for _, name, text in hits)
+        ctx = "\n\n".join(mr_refs(text) for _, _, text in hits)
         user_msg = f"संदर्भ:\n{ctx}\n\n---\nप्रश्न: {question}"
     else:
         user_msg = question
+    if MODE == "granth":
+        user_msg += MARATHI_REMINDER
     prompt = GRANTH_PROMPT if MODE == "granth" else SYSTEM_PROMPT
     messages = [{"role": "system", "content": prompt}] + list(history) + \
                [{"role": "user", "content": user_msg}]
+    payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
+               "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.3,
+                           "top_p": 0.9, "repeat_penalty": 1.15, "repeat_last_n": 256}}
+    if CHAT_MODEL.startswith(("qwen3", "deepseek-r1")):
+        payload["think"] = False      # "विचार" मोड बंद — थेट उत्तर
+    answer = ""
     try:
-        resp = ollama_post("/api/chat", {"model": CHAT_MODEL, "messages": messages, "stream": True,
-                                         "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT,
-                                                     "temperature": 0.3}},
-                           stream=True)
+        resp = ollama_post("/api/chat", payload, stream=True)
         with resp:
             for line in resp:
                 if not line.strip():
@@ -455,7 +561,11 @@ def answer_events(question, history=()):
                     yield {"type": "error", "msg": part["error"]}; break
                 tok = part.get("message", {}).get("content", "")
                 if tok:
+                    answer += tok
                     yield {"type": "token", "t": tok}
+                    if is_looping(answer):
+                        yield {"type": "token", "t": "\n…"}
+                        break
                 if part.get("done"):
                     break
     except Exception as e:
@@ -463,19 +573,50 @@ def answer_events(question, history=()):
     yield {"type": "done"}
 
 
+def is_looping(text, span=70):
+    """उत्तरात तोच मजकूर पुन्हा पुन्हा येऊ लागला की खरे"""
+    if len(text) < 3 * span:
+        return False
+    tail = text[-span:]
+    if text[:-span].count(tail) >= 1:
+        return True
+    lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 25]
+    return len(lines) >= 3 and lines[-1] in lines[:-1]
+
+
+HINDI_MARKS = (" है", " हैं", " में ", "किया", " इस ", " यह ", "जाता है", "होता है", "चाहिए", " था ", " और ")
+MARATHI_MARKS = (" आहे", "आहेत", " आणि ", "करावे", "म्हणजे", " होते", " नाही", "असते", " हे ", " या ")
+
+
+def lang_score(text):
+    """हिंदीचे प्रमाण (0 = पूर्ण मराठी, 1 = पूर्ण हिंदी)"""
+    h = sum(text.count(m) for m in HINDI_MARKS)
+    m = sum(text.count(x) for x in MARATHI_MARKS)
+    return h / (h + m) if h + m else 0.0
+
+
 def ask_cli(questions):
     """python granthsagar.py --ask "प्रश्न" ["प्रश्न 2" ...]  -> उत्तर Markdown मध्ये छापतो"""
     load_index(); rebuild_vecs(); build_index(lambda *_: None)
+    rows = []
     for q in questions:
         print(f"\n## ❓ {q}\n")
+        t0, ans, srcs = time.time(), "", []
         for ev in answer_events(q):
             if ev["type"] == "token":
+                ans += ev["t"]
                 print(ev["t"], end="", flush=True)
             elif ev["type"] == "sources" and ev["sources"]:
+                srcs = ev["sources"]
                 print("📄 संदर्भ: " + ", ".join(ev["sources"]) + "\n")
             elif ev["type"] in ("alert", "error"):
                 print(f"> {ev['msg']}\n")
+        rows.append((q, time.time() - t0, len(ans), lang_score(ans), ans.endswith("…")))
         print()
+    print(f"\n## 📊 सारांश — `{CHAT_MODEL}`\n")
+    print("| प्रश्न | वेळ (से.) | अक्षरे | हिंदी % | पुनरावृत्ती थांबवली |\n|---|---|---|---|---|")
+    for q, dt, n, h, loop in rows:
+        print(f"| {q[:40]}… | {dt:.0f} | {n} | {h * 100:.0f}% | {'हो' if loop else '—'} |")
 
 
 def main():

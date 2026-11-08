@@ -1,0 +1,55 @@
+name: Model comparison
+# अनेक मॉडेल्स समांतर (एकाच वेळी) चालवून तेच प्रश्न विचारतो. प्रत्येक job च्या Summary मध्ये उत्तरे + सारांश.
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "मॉडेल्स (JSON यादी)"
+        default: '["qwen2.5:7b", "gemma3:4b", "gemma4:e4b", "qwen3:8b"]'
+
+jobs:
+  ask:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ${{ fromJSON(github.event.inputs.models) }}
+    env:
+      GS_CHAT_MODEL: ${{ matrix.model }}
+      GS_EMBED_MODEL: bge-m3
+      GS_DOCS: ${{ github.workspace }}/ci_granth
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          pip install numpy
+          mkdir -p ci_granth && cp -r granth/atharvaveda granth/sushruta granth/charaka ci_granth/
+          nproc; free -g | head -2
+
+      - name: Restore index
+        uses: actions/cache/restore@v4
+        with:
+          path: index.json
+          key: index-bge-m3-${{ hashFiles('ci_granth/**') }}
+          restore-keys: index-bge-m3-
+
+      - name: Start Ollama + pull
+        id: pull
+        run: |
+          docker run -d --name ollama -p 11434:11434 ollama/ollama:latest
+          for i in $(seq 1 60); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
+          docker exec ollama ollama pull bge-m3 >/dev/null
+          if docker exec ollama ollama pull "$GS_CHAT_MODEL" >/dev/null; then echo ok=1 >> "$GITHUB_OUTPUT";
+          else echo "## ❌ $GS_CHAT_MODEL उपलब्ध नाही" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Ask
+        if: steps.pull.outputs.ok == '1'
+        run: |
+          python -u granthsagar.py --index | tail -3
+          mapfile -t Q < <(grep -v '^\s*#' tests/questions.txt | grep -v '^\s*$')
+          echo "# 🪔 $GS_CHAT_MODEL" > answers.md
+          python -u granthsagar.py --ask "${Q[@]}" | tee -a answers.md
+          cat answers.md >> "$GITHUB_STEP_SUMMARY"
