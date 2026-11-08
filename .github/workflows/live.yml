@@ -44,6 +44,7 @@ jobs:
           key: ollama-${{ env.GS_CHAT_MODEL }}-${{ env.GS_EMBED_MODEL }}
 
       - name: Start Ollama (Docker)
+        id: ollama
         run: |
           mkdir -p ~/.ollama
           docker run -d --name ollama -v ~/.ollama:/root/.ollama -p 11434:11434 ollama/ollama:latest
@@ -62,7 +63,7 @@ jobs:
           restore-keys: index-${{ env.GS_EMBED_MODEL }}-
 
       - name: Read texts (embedding)
-        timeout-minutes: 140
+        timeout-minutes: 120
         run: python -u granthsagar.py --index
 
       - name: Save index
@@ -73,6 +74,7 @@ jobs:
           key: index-${{ env.GS_EMBED_MODEL }}-${{ hashFiles('ci_granth/**') }}-${{ github.run_id }}
 
       - name: Ask questions
+        if: always() && steps.ollama.outcome == 'success'
         run: |
           mapfile -t Q < <(grep -v '^\s*#' tests/questions.txt | grep -v '^\s*$')
           { echo "# 🪔 ग्रंथसागर — live उत्तरे"; echo; echo "मॉडेल: \`$GS_CHAT_MODEL\` · ग्रंथ: $FOLDERS"; echo; } > answers.md
