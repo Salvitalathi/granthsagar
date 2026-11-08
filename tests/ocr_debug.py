@@ -1,10 +1,9 @@
-"""एका lang/psm चे raw आणि clean() नंतरचे output शेजारी: python tests/ocr_debug.py mar+san 6"""
-import sys, os, subprocess
+"""पूर्ण प्रवाह (भाषा ओळख + OCR) एका PDF वर: python tests/ocr_debug.py sample_scan.pdf"""
+import sys, os, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pdf_ocr as p
 ROOT = os.path.dirname(os.path.abspath(__file__))
-pdf = os.path.join(ROOT, "data", sys.argv[3] if len(sys.argv) > 3 else "om_mantra.pdf")
-p.render_page(pdf, 1, "/tmp/dbg.png", 300)
-raw = subprocess.run(["tesseract", "/tmp/dbg.png", "stdout", "-l", sys.argv[1], "--psm", sys.argv[2]],
-                     capture_output=True).stdout.decode("utf-8", "replace")
-print(f"### {sys.argv[1]} psm{sys.argv[2]} {os.path.basename(pdf)}\n--- RAW ---\n{raw}\n--- CLEAN ---\n{p.clean(raw)}\n")
+for name in sys.argv[1:]:
+    out = tempfile.mkdtemp()
+    n, d = p.process_pdf(os.path.join(ROOT, "data", name), name, out, lang="auto", jobs=1, progress=print)
+    print(open(os.path.join(d, "part_01.txt"), encoding="utf-8").read()[:500], "\n")
