@@ -10,3 +10,5 @@ gretil_list.txt
 .cache/
 ci_granth/
 granth/pdf/
+pdf_inbox/
+tessdata/

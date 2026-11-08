@@ -52,6 +52,30 @@ check("पुनरावृत्ती ओळखली", gs.is_looping("ही
 check("साधे उत्तर पुनरावृत्ती नाही", not gs.is_looping(open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()[:2000]))
 check("स्थान मराठीत", gs.mr_refs("[सुश्रुत संहिता Sū. 15]") == "[सुश्रुत संहिता सूत्रस्थान 15]")
 
+# ---- 2c. PDF -> मजकूर (Tesseract असेल तर) ----
+import pdf_ocr
+FONT = next((f for f in ("/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                         "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+                         r"C:\Windows\Fonts\Nirmala.ttf") if os.path.exists(f)), None)
+if pdf_ocr.check_setup()[0] and FONT:
+    from PIL import Image, ImageDraw, ImageFont
+    tmp_pdf = tempfile.mkdtemp()
+    img = Image.new("L", (1700, 2200), 255)
+    d = ImageDraw.Draw(img)
+    fnt = ImageFont.truetype(FONT, 64)
+    for i, line in enumerate(["नाक को रोगरहित रखने के लिये", "हमेशा नाक में सरसों का तेल डालें।",
+                              "गले की सूजन में नमक के पानी से गरारे करें।"] * 3):
+        d.text((120, 150 + i * 110), line, font=fnt, fill=0)
+    pdf_path = os.path.join(tmp_pdf, "नमुना.pdf")
+    img.save(pdf_path, resolution=200)
+    n, dest = pdf_ocr.process_pdf(pdf_path, "नमुना ग्रंथ", os.path.join(tmp_pdf, "out"), jobs=1, progress=lambda m: None)
+    txt = open(os.path.join(dest, "part_01.txt"), encoding="utf-8").read()
+    check("PDF OCR: पान आणि शीर्षक", n == 1 and txt.startswith("[नमुना ग्रंथ पृ. 1]"))
+    check("PDF OCR: मजकूर ओळखला", "रोगरहित" in txt and "गरारे" in txt)
+    shutil.rmtree(tmp_pdf, ignore_errors=True)
+else:
+    print("⏭  PDF OCR test सोडला (Tesseract/pypdfium2/font नाही)")
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)

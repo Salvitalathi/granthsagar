@@ -12,7 +12,7 @@
 
 फक्त Python (3.8+) लागतो. PDF वाचण्यासाठी हवे असल्यास:  pip install pypdf
 """
-import json, os, re, sys, math, time, hashlib, threading, webbrowser, zipfile, urllib.request
+import json, os, re, sys, math, time, hashlib, shutil, threading, webbrowser, zipfile, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
@@ -48,6 +48,8 @@ if not OLLAMA.startswith("http"):
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
+PDF_INBOX = os.path.join(HERE, "pdf_inbox")          # इथे टाकलेल्या PDF आपोआप मजकुरात बदलतात
+PDF_OUT = os.path.join(DOCS_DIR, "pdf")             # OCR चा मजकूर इथे जातो
 PORT = int(os.environ.get("GS_PORT", "8765"))
 CHUNK = 800        # एका तुकड्यात किती अक्षरे
 OVERLAP = 150      # तुकड्यांमध्ये किती अक्षरे सामायिक
@@ -117,7 +119,7 @@ MARATHI_REMINDER = ("\n\n(सूचना: उत्तर फक्त शु�
                     "संदर्भ जसाच्या तसा पूर्ण छापू नका — फक्त संबंधित १-२ ओळी उद्धृत करा आणि बाकी मराठीत समजावा. "
                     "संदर्भात नसलेला श्लोक, क्रमांक किंवा ग्रंथ-नाव बनवू नका; शब्दाचा अर्थ खात्री नसेल तर तसे सांगा.)")
 
-SUPPORTED = (".txt", ".md", ".csv", ".pdf", ".docx")
+SUPPORTED = (".txt", ".md", ".csv", ".docx")   # PDF थेट नाही — आधी pdf_ocr ने मजकूर बनतो
 
 
 # ===================== Ollama शी बोलणे =====================
@@ -407,7 +409,13 @@ def search(query):
 
 
 # ===================== Folder तपासणी + पार्श्वभूमीत वाचन =====================
-INDEX_STATUS = {"running": False, "msg": ""}
+INDEX_STATUS = {"running": False, "msg": "", "again": False}
+OCR_STATUS = {"running": False, "msg": "", "error": "", "done": []}
+OCR_LOCK = threading.Lock()
+try:
+    import pdf_ocr
+except ImportError:
+    pdf_ocr = None
 
 
 def docs_report():
@@ -426,14 +434,19 @@ def docs_report():
     for top, n in sorted(counts.items()):
         lines.append(f"   • {top}: {n} फाइल्स")
     if not counts:
-        lines.append("   (इथे एकही .txt/.pdf/.docx फाइल नाही)")
+        lines.append("   (इथे एकही .txt/.docx फाइल नाही)")
+    pdfs = pending_pdfs()
+    if pdfs:
+        ready, why = (pdf_ocr.check_setup() if pdf_ocr else (False, "pdf_ocr.py सापडली नाही"))
+        lines.append(f"📄 {len(pdfs)} PDF मजकुरात बदलायच्या आहेत" + ("" if ready else f" — पण: {why}"))
     for z in zips:
         lines.append(f"⚠️ {z} ही zip अजून extract केलेली नाही — तिच्यावर right-click → Extract All करा")
     # नेहमीची चूक: granth च्या बाहेर बनवलेला folder
     for name in os.listdir(HERE):
         p = os.path.join(HERE, name)
         if os.path.isdir(p) and os.path.abspath(p) != os.path.abspath(DOCS_DIR) and \
-                name.lower() not in ("scripts", "tests", "tiny_ai", ".git", ".github", ".cache", "__pycache__"):
+                name.lower() not in ("scripts", "tests", "tiny_ai", ".git", ".github", ".cache", "__pycache__",
+                             "pdf_inbox", "tessdata"):
             n = sum(f.lower().endswith(".txt") for _, _, fs in os.walk(p) for f in fs)
             if n:
                 lines.append(f"⚠️ '{name}' folder मध्ये {n} फाइल्स आहेत, पण तो 'granth' च्या बाहेर आहे — "
@@ -444,6 +457,7 @@ def docs_report():
 def start_indexing():
     """पार्श्वभूमीत ग्रंथ वाचणे — chat चालू राहतो"""
     if INDEX_STATUS["running"]:
+        INDEX_STATUS["again"] = True     # चालू वाचन संपल्यावर पुन्हा एकदा (नवीन फाइल्ससाठी)
         return False
 
     def work():
@@ -452,8 +466,12 @@ def start_indexing():
             print(m, flush=True)
             INDEX_STATUS["msg"] = m.strip()
         try:
-            with LOCK:
-                nf, nc = build_index(log)
+            while True:
+                INDEX_STATUS["again"] = False
+                with LOCK:
+                    nf, nc = build_index(log)
+                if not INDEX_STATUS["again"]:
+                    break
             INDEX_STATUS["msg"] = f"✅ {nf} फाइल्स, {nc} तुकडे तयार."
         except Exception as e:
             INDEX_STATUS["msg"] = f"⚠️ फाइल्स वाचताना अडचण: {e}"
@@ -463,6 +481,89 @@ def start_indexing():
 
     threading.Thread(target=work, daemon=True).start()
     return True
+
+
+def pending_pdfs():
+    """pdf_inbox आणि granth मध्ये टाकलेल्या, अजून मजकूर न झालेल्या PDF"""
+    out = []
+    for base in (PDF_INBOX, DOCS_DIR):
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d != "done"]
+            out += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(".pdf")]
+    return out
+
+
+def start_ocr():
+    """पार्श्वभूमीत PDF -> मजकूर, मग आपोआप वाचन"""
+    if pdf_ocr is None or OCR_STATUS["running"] or not pending_pdfs():
+        return False
+
+    def work():
+        OCR_STATUS.update(running=True, error="")
+        def log(m):
+            print(m, flush=True)
+            OCR_STATUS["msg"] = m.strip()
+        try:
+            while True:
+                todo = pending_pdfs()
+                if not todo:
+                    break
+                pdf = todo[0]
+                meta = {}
+                if os.path.exists(pdf + ".json"):
+                    with open(pdf + ".json", encoding="utf-8") as f:
+                        meta = json.load(f)
+                name = meta.get("name") or os.path.splitext(os.path.basename(pdf))[0].replace("_", " ")
+                with OCR_LOCK:
+                    pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "hin"), progress=log)
+                # मूळ PDF बाजूला ठेवा (परत OCR होऊ नये)
+                done = os.path.join(PDF_INBOX, "done")
+                os.makedirs(done, exist_ok=True)
+                target = os.path.join(done, os.path.basename(pdf))
+                if os.path.exists(target):
+                    target = os.path.join(done, f"{int(time.time())}_{os.path.basename(pdf)}")
+                shutil.move(pdf, target)
+                if os.path.exists(pdf + ".json"):
+                    os.remove(pdf + ".json")
+                OCR_STATUS["done"].append(name)
+                start_indexing()          # तयार मजकूर लगेच वाचायला घ्या
+            OCR_STATUS["msg"] = "✅ सर्व PDF मजकुरात बदलल्या."
+        except Exception as e:
+            msg = str(e) if pdf_ocr and isinstance(e, pdf_ocr.OCRSetupError) else f"PDF मध्ये अडचण: {e}"
+            OCR_STATUS.update(error=msg, msg="⚠️ " + msg)
+            print("⚠️ " + msg, flush=True)
+        finally:
+            OCR_STATUS["running"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
+def save_upload(rfile, length, filename, name, lang):
+    os.makedirs(PDF_INBOX, exist_ok=True)
+    safe = re.sub(r'[\\/:*?"<>|]+', "_", os.path.basename(filename or "granth.pdf"))
+    if not safe.lower().endswith(".pdf"):
+        safe += ".pdf"
+    path = os.path.join(PDF_INBOX, safe)
+    if os.path.exists(path):
+        path = os.path.join(PDF_INBOX, f"{int(time.time())}_{safe}")
+    left = length
+    with open(path + ".part", "wb") as f:
+        while left > 0:
+            chunk = rfile.read(min(1 << 20, left))
+            if not chunk:
+                break
+            f.write(chunk); left -= len(chunk)
+    with open(path + ".part", "rb") as f:
+        if f.read(5) != b"%PDF-":
+            os.remove(path + ".part")
+            raise ValueError("ही फाइल PDF नाही.")
+    with open(path + ".json", "w", encoding="utf-8") as f:
+        json.dump({"name": name.strip() or os.path.splitext(safe)[0], "lang": lang}, f, ensure_ascii=False)
+    os.replace(path + ".part", path)
+    return path
 
 
 # ===================== Web chat =====================
@@ -480,24 +581,47 @@ button.ghost{background:transparent;border:1px solid #fff8}
 .bot{align-self:flex-start;background:#fff;box-shadow:0 1px 3px #0002}
 .src{font-size:13px;color:#666;margin-top:6px;border-top:1px dashed #ccc;padding-top:4px}
 .alert{align-self:stretch;background:#fde2e1;color:#8a1c1c;border:1px solid #e9a3a0;border-radius:10px;padding:10px 14px;font-weight:600}
+#pdfPanel{background:#fff8ec;border-bottom:1px solid #e6d3b3;padding:10px 16px;font-size:14px}
+#pdfPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}#pdfPanel input,#pdfPanel select{font:inherit;padding:6px;border:1px solid #bbb;border-radius:6px}
+#pn{flex:1;min-width:220px}#pmsg{margin-top:6px;color:#555;white-space:pre-wrap}
 .sys{align-self:center;font-size:14px;color:#555;background:#e8e2d4;border-radius:8px;padding:6px 12px}
 form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
 textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
 </style></head><body>
 <header><h1>🪔 ग्रंथसागर <small id="st"></small></h1>
+<button class="ghost" onclick="pdfPanel.hidden=!pdfPanel.hidden">📄 PDF जोडा</button>
 <button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
 <button class="ghost" onclick="hist=[];chat.innerHTML=''">🧹 नवीन</button></header>
+<div id="pdfPanel" hidden>
+ <b>📄 PDF ग्रंथ जोडा</b> — scan केलेली किंवा कोणत्याही font मधील PDF चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.
+ <div class="row"><input type="file" id="pf" accept=".pdf,application/pdf" multiple onchange="pfName()">
+ <input id="pn" placeholder="ग्रंथाचे नाव (उदा. चरक संहिता हिंदी टीका भाग 1)">
+ <select id="pl"><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select>
+ <button onclick="uploadPdfs()">अपलोड</button></div>
+ <div id="pmsg"></div>
+</div>
 <div id="chat"></div>
 <form onsubmit="send();return false"><textarea id="q" placeholder="उदा. चरक संहितेनुसार अपचनावर काय उपाय आहेत? / गायत्री मंत्राचा अर्थ काय? (Enter = पाठवा, Shift+Enter = नवी ओळ)"></textarea><button>पाठवा</button></form>
 <div style="text-align:center;font-size:12px;color:#777;padding:0 0 8px">हा AI अभ्यासासाठी आहे — चुका होऊ शकतात. उपचारापूर्वी प्रमाणित वैद्य/डॉक्टरांचा सल्ला घ्या.</div>
 <script>
 const chat=document.getElementById('chat'),q=document.getElementById('q'),st=document.getElementById('st');let hist=[],busy=false;
 function add(cls,t){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=1e9;return d}
-let warned=false;
+const pdfPanel=document.getElementById('pdfPanel'),pf=document.getElementById('pf'),pn=document.getElementById('pn'),pl=document.getElementById('pl'),pmsg=document.getElementById('pmsg');
+function pfName(){if(pf.files.length===1){pn.value=pf.files[0].name.replace(/\.pdf$/i,'').replace(/[_-]+/g,' ')}else if(pf.files.length>1){pn.value='';pn.placeholder='अनेक फाइल्स — प्रत्येकीचे नाव फाइल-नावावरून'}}
+function upOne(file,name){return new Promise(res=>{const x=new XMLHttpRequest();
+ x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value);
+ x.upload.onprogress=e=>{if(e.lengthComputable)pmsg.textContent=`⬆ ${file.name}: ${Math.round(e.loaded*100/e.total)}%`};
+ x.onload=()=>{try{res(JSON.parse(x.responseText).msg)}catch(e){res('⚠️ '+x.responseText)}};x.onerror=()=>res('⚠️ अपलोड अयशस्वी');x.send(file)})}
+async function uploadPdfs(){if(!pf.files.length){pmsg.textContent='आधी PDF निवडा.';return}
+ const out=[];for(const f of pf.files){out.push(await upOne(f,pf.files.length===1?pn.value:''))}
+ pmsg.textContent=out.join('\n');pf.value='';status()}
+let warned=false,ocrErr='';
 async function status(){try{const r=await (await fetch('/status')).json();
- st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`+(r.indexing?` · 📖 ${r.progress}`:''):'· Ollama चालू नाही!';
+ st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`+(r.ocr?` · ${r.ocr_msg}`:'')+(r.indexing?` · 📖 ${r.progress}`:''):'· Ollama चालू नाही!';
  if(r.warn&&!warned){add('sys',r.warn);warned=true}
- setTimeout(status,r.indexing?5000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
+ if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;add('sys','⚠️ '+r.ocr_error);pmsg.textContent='⚠️ '+r.ocr_error}
+ if(!pdfPanel.hidden&&r.ocr)pmsg.textContent=r.ocr_msg;
+ setTimeout(status,(r.indexing||r.ocr)?4000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
 async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
@@ -551,12 +675,27 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 warn = "Ollama चालू नाही. Ollama app सुरू करा, मग हे पान refresh करा."
             self._json({"ok": ok, "model": CHAT_MODEL, "files": len(INDEX["files"]), "chunks": len(VECS),
-                        "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"]})
+                        "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
+                        "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
+                        "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0]})
         else:
             self.send_error(404)
 
     def do_POST(self):
+        if self.path.startswith("/upload"):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                path = save_upload(self.rfile, int(self.headers.get("Content-Length", 0)),
+                                   qs.get("file", ["granth.pdf"])[0], qs.get("name", [""])[0],
+                                   qs.get("lang", ["hin"])[0])
+                start_ocr()
+                self._json({"ok": True, "msg": f"📥 {os.path.basename(path)} मिळाली — मजकूर बनवणे सुरू (प्रगती वर दिसेल)."})
+            except Exception as e:
+                self._json({"ok": False, "msg": f"⚠️ {e}"})
+            return
         if self.path == "/reindex":
+            start_ocr()
             started = start_indexing()
             msg = docs_report() + "\n" + ("⏳ वाचन सुरू झाले — प्रगती वरच्या पट्टीत दिसेल. तोपर्यंत प्रश्न विचारू शकता."
                                           if started else "⏳ वाचन आधीच चालू आहे.")
@@ -709,6 +848,7 @@ def main():
     print(docs_report())
     if ok:
         print("📖 नवीन/बदललेले ग्रंथ पार्श्वभूमीत वाचत आहे — chat लगेच वापरता येईल.")
+        start_ocr()
         start_indexing()
     url = f"http://127.0.0.1:{PORT}"
     print(f"🌐 {url}  (बंद करण्यासाठी Ctrl+C)")

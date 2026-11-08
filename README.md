@@ -28,18 +28,23 @@
 | इतर कोणताही ग्रंथ | `.txt`, `.pdf` किंवा `.docx` फाइल `granth/` folder मध्ये टाका |
 | GRETIL वरील पुराणे | `python scripts/download_granth.py purana` → `python granth_tayar.py` |
 
-### PDF ग्रंथ (scan केलेले किंवा जुन्या font मधील)
+### PDF ग्रंथ जोडणे (scan केलेले किंवा कोणत्याही font मधील)
 
-`python scripts/pdf_ocr.py "ग्रंथ.pdf" --name "ग्रंथाचे नाव"` चालवा. Script स्वतः ठरवते की PDF चा मजकूर थेट घेता येईल की OCR करावे लागेल. तयार झालेला मजकूर `granth/pdf/` मध्ये जातो, आणि प्रत्येक पानाला `[ग्रंथ पृ. 12]` असे शीर्षक असते, म्हणजे उत्तरात पान क्रमांक येतो.
-Windows साठी लागणारे: [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) (install करताना Hindi आणि Marathi निवडा) आणि [Poppler](https://github.com/oschwartz10612/poppler-windows/releases).
-`granth/pdf/` GitHub वर जात नाही (`.gitignore`), कारण तुमच्या PDF चा मजकूर तुमच्याकडेच राहावा.
+यासाठी काहीही हाताने करावे लागत नाही. खालीलपैकी कोणताही एक मार्ग वापरा:
+- chat मधील **📄 PDF जोडा** बटण दाबा, PDF निवडा, ग्रंथाचे नाव आणि भाषा (हिंदी/संस्कृत किंवा मराठी) द्या, आणि "अपलोड" दाबा.
+- किंवा PDF `pdf_inbox` folder मध्ये (किंवा थेट `granth` मध्ये) टाका, आणि ग्रंथसागर सुरू करा किंवा "📂 फाइल्स पुन्हा वाचा" दाबा.
+
+ग्रंथसागर स्वतः ठरवतो की PDF चा मजकूर थेट घेता येईल की OCR करावा लागेल. तयार झालेला मजकूर `granth/pdf/<ग्रंथाचे नाव>/` मध्ये save होतो, प्रत्येक पानाला `[ग्रंथ पृ. 12]` असे शीर्षक असते, आणि नंतर तो आपोआप वाचला जातो. मूळ PDF `pdf_inbox/done/` मध्ये हलवली जाते. वरच्या पट्टीत प्रगती दिसते.
+`start.bat` लागणारे सगळे (pypdfium2, Tesseract) पहिल्यांदा आपोआप install करते. हिंदी/मराठी OCR भाषा-फाइल गरज पडेल तेव्हा एकदाच उतरवली जाते.
+`granth/pdf/` आणि `pdf_inbox/` GitHub वर जात नाहीत, म्हणजे तुमच्या पुस्तकांचा मजकूर तुमच्याकडेच राहतो.
 
 नवीन फाइल टाकल्यावर chat मधील **📂 फाइल्स पुन्हा वाचा** दाबा.
 
 ## Folder रचना
 
 ```
-granthsagar.py         मुख्य app (chat + ग्रंथ शोध)
+granthsagar.py         मुख्य app (chat + ग्रंथ शोध + PDF जोडणे)
+pdf_ocr.py             PDF → मजकूर (OCR)
 granth_tayar.py        IAST → देवनागरी, श्लोक संदर्भ
 scripts/download_granth.py   GRETIL वरून ग्रंथ उतरवणे
 granth/                तुमचे ग्रंथ (AI इथूनच वाचतो)
