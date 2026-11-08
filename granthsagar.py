@@ -45,6 +45,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
+VERSION = "2026-11-09.2"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -704,7 +705,7 @@ button.ghost{background:transparent;border:1px solid #fff8}
 form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
 textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
 </style></head><body>
-<header><h1>🪔 ग्रंथसागर <small id="st"></small></h1>
+<header><h1>🪔 ग्रंथसागर <small id="st"></small> <small style="opacity:.5">v__VERSION__</small></h1>
 <button class="ghost" onclick="pdfPanel.hidden=!pdfPanel.hidden">📄 PDF जोडा</button>
 <button class="ghost" onclick="openInbox()">📂 PDF folder उघडा</button>
 <button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
@@ -782,7 +783,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/":
-            body = PAGE.encode("utf-8")
+            body = PAGE.replace("__VERSION__", VERSION).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -801,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "model": CHAT_MODEL, "files": len(INDEX["files"]), "chunks": len(VECS),
                         "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
                         "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
-                        "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0]})
+                        "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION})
         else:
             self.send_error(404)
 
@@ -1002,7 +1003,21 @@ def main():
     if "--ask" in sys.argv:
         ask_cli(sys.argv[sys.argv.index("--ask") + 1:])
         return
-    print("🪔 ग्रंथसागर सुरू होत आहे…")
+    print(f"🪔 ग्रंथसागर सुरू होत आहे… (आवृत्ती {VERSION})")
+    print(f"   folder: {HERE}")
+    try:                                   # आधी port घ्या — जुना ग्रंथसागर चालू असेल तर इथेच थांबा
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError:
+        old_ver = "जुनी"
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/status", timeout=3) as r:
+                old_ver = json.loads(r.read()).get("version", "जुनी (आवृत्ती क्रमांक नसलेली)")
+        except Exception:
+            pass
+        print(f"\n❌ दुसरा ग्रंथसागर आधीच चालू आहे (आवृत्ती: {old_ver}).\n"
+              f"   आधीची काळी खिडकी बंद करा (किंवा तिथे Ctrl+C), मग ही फाइल पुन्हा चालवा.\n"
+              f"   नाहीतर browser मध्ये जुनाच ग्रंथसागर दिसत राहील.")
+        sys.exit(1)
     ok, _ = ollama_ok()
     if not ok:
         print(f"⚠️  Ollama ({OLLAMA}) चालू नाही. Ollama सुरू करा — chat पान तरी उघडेल.")
@@ -1020,7 +1035,6 @@ def main():
         threading.Thread(target=watch_folders, daemon=True).start()
     url = f"http://127.0.0.1:{PORT}"
     print(f"🌐 {url}  (बंद करण्यासाठी Ctrl+C)")
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     if "--no-browser" not in sys.argv:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
