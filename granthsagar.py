@@ -12,7 +12,7 @@
 
 फक्त Python (3.8+) लागतो. PDF वाचण्यासाठी हवे असल्यास:  pip install pypdf
 """
-import json, os, re, sys, math, time, hashlib, shutil, threading, webbrowser, zipfile, urllib.request
+import json, os, re, sys, subprocess, math, time, hashlib, shutil, threading, webbrowser, zipfile, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
@@ -706,6 +706,7 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
 </style></head><body>
 <header><h1>🪔 ग्रंथसागर <small id="st"></small></h1>
 <button class="ghost" onclick="pdfPanel.hidden=!pdfPanel.hidden">📄 PDF जोडा</button>
+<button class="ghost" onclick="openInbox()">📂 PDF folder उघडा</button>
 <button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
 <button class="ghost" onclick="hist=[];chat.innerHTML=''">🧹 नवीन</button></header>
 <div id="pdfPanel" hidden>
@@ -744,6 +745,7 @@ async function status(){try{const r=await (await fetch('/status')).json();
  if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;add('sys','⚠️ '+r.ocr_error);pmsg.textContent='⚠️ '+r.ocr_error}
  if(!pdfPanel.hidden&&r.ocr)pmsg.textContent=r.ocr_msg;
  setTimeout(status,(r.indexing||r.ocr)?4000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
+async function openInbox(){try{const r=await (await fetch('/open-inbox',{method:'POST'})).json();add('sys',r.msg)}catch(e){add('sys','⚠️ '+e)}}
 async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
@@ -817,6 +819,20 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json({"ok": False, "msg": f"⚠️ {e}"})
             return
+        if self.path == "/open-inbox":
+            os.makedirs(PDF_INBOX, exist_ok=True)
+            try:
+                if os.name == "nt":
+                    os.startfile(PDF_INBOX)                       # Windows Explorer मध्ये folder उघडा
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", PDF_INBOX])
+                else:
+                    subprocess.Popen(["xdg-open", PDF_INBOX])
+            except Exception:
+                pass
+            OCR_STATUS["blocked"] = ""
+            return self._json({"ok": True, "msg": f"📂 हा folder उघडला आहे: {PDF_INBOX}\n"
+                                                   "यात PDF किंवा PDF ची ZIP टाका — 20 सेकंदांत काम आपोआप सुरू होईल."})
         if self.path == "/reindex":
             OCR_STATUS["blocked"] = ""            # बटण दाबले — पुन्हा प्रयत्न
             start_ocr()
@@ -990,9 +1006,12 @@ def main():
     ok, _ = ollama_ok()
     if not ok:
         print(f"⚠️  Ollama ({OLLAMA}) चालू नाही. Ollama सुरू करा — chat पान तरी उघडेल.")
+    os.makedirs(PDF_INBOX, exist_ok=True)              # ZIP मधून आल्यावरही folder असावा
+    os.makedirs(DOCS_DIR, exist_ok=True)
     load_index()
     rebuild_vecs()
     print(docs_report())
+    print(f"📥 PDF/ZIP इथे टाका: {PDF_INBOX}")
     if ok:
         print("📖 नवीन/बदललेले ग्रंथ पार्श्वभूमीत वाचत आहे — chat लगेच वापरता येईल.")
         start_ocr()
