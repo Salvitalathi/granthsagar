@@ -12,7 +12,7 @@
 
 फक्त Python (3.8+) लागतो. PDF वाचण्यासाठी हवे असल्यास:  pip install pypdf
 """
-import json, os, re, sys, math, threading, webbrowser, zipfile, urllib.request
+import json, os, re, sys, math, time, hashlib, threading, webbrowser, zipfile, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
@@ -95,11 +95,15 @@ def ollama_ok():
         return False, []
 
 
-def embed(texts):
-    out = []
-    for i in range(0, len(texts), 16):
-        res = ollama_post("/api/embed", {"model": EMBED_MODEL, "input": texts[i:i + 16]})
+def embed(texts, progress=None):
+    out, t0 = [], time.time()
+    for i in range(0, len(texts), 32):
+        res = ollama_post("/api/embed", {"model": EMBED_MODEL, "input": texts[i:i + 32]})
         out.extend(res["embeddings"])
+        if progress and len(texts) > 64:
+            done = len(out); rate = done / max(time.time() - t0, 1e-6)
+            progress(f"      {done}/{len(texts)} तुकडे, {rate:.1f}/सेकंद, "
+                     f"उरलेला वेळ ~{(len(texts) - done) / max(rate, 1e-6) / 60:.0f} मिनिटे")
     return out
 
 
@@ -144,6 +148,9 @@ def read_file(path):
     return ""
 
 
+HEAD = re.compile(r"^\[[^\]\n]{2,60}\]", re.M)
+
+
 def chunk_text(text):
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -157,11 +164,20 @@ def chunk_text(text):
             if cut > start:
                 end = cut + 1
         piece = text[start:end].strip()
+        if piece and not piece.startswith("["):
+            # तुकड्याला त्याचे शीर्षक (उदा. [अथर्ववेद 1.2]) जोडा, म्हणजे AI ला संदर्भ कळतो
+            heads = HEAD.findall(text, 0, start + 1)
+            if heads:
+                piece = heads[-1] + " (पुढे)\n" + piece
         if piece:
             chunks.append(piece)
         if end >= len(text):
             break
-        start = max(end - OVERLAP, start + 1)
+        nxt = max(end - OVERLAP, start + 1)
+        sp = text.find("\n", nxt, end)          # overlap ओळीच्या सुरुवातीपासून
+        if sp == -1:
+            sp = text.find(" ", nxt, end)
+        start = sp + 1 if sp != -1 else nxt
     return chunks
 
 
@@ -183,14 +199,26 @@ def load_index():
             pass
 
 
+try:
+    import numpy as np
+except ImportError:
+    np = None
+MAT = None
+
+
 def rebuild_vecs():
-    global VECS
+    global VECS, MAT
     v = []
     for name, info in INDEX["files"].items():
         for c in info["chunks"]:
             vec = c["vec"]
             v.append((name, c["text"], vec, math.sqrt(sum(x * x for x in vec)) or 1.0))
     VECS = v
+    if np is not None and v:
+        m = np.array([x[2] for x in v], dtype=np.float32)
+        MAT = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-8)
+    else:
+        MAT = None
 
 
 def build_index(log=print):
@@ -201,31 +229,38 @@ def build_index(log=print):
             if fn.lower().endswith(SUPPORTED) and not fn.startswith("~$"):
                 full = os.path.join(root, fn)
                 found[os.path.relpath(full, DOCS_DIR)] = full
+    def save():
+        tmp = INDEX_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(INDEX, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, INDEX_FILE)
+
     changed = False
     for name in list(INDEX["files"]):
         if name not in found:
             del INDEX["files"][name]; changed = True
             log(f"  - काढली: {name}")
+    todo = []
     for name, full in sorted(found.items()):
-        mtime = os.path.getmtime(full)
+        with open(full, "rb") as f:
+            digest = hashlib.sha1(f.read()).hexdigest()
         old = INDEX["files"].get(name)
-        if old and old["mtime"] == mtime:
-            continue
+        if not (old and old.get("sha1") == digest):
+            todo.append((name, full, digest))
+    for k, (name, full, digest) in enumerate(todo, 1):
         try:
             chunks = chunk_text(read_file(full))
-            vecs = embed(chunks) if chunks else []
+            log(f"  [{k}/{len(todo)}] {name}: {len(chunks)} तुकडे वाचत आहे…")
+            vecs = embed(chunks, progress=log) if chunks else []
         except Exception as e:
             log(f"  ! {name}: वाचता आली नाही ({e})")
             continue
-        INDEX["files"][name] = {"mtime": mtime,
-                                "chunks": [{"text": t, "vec": v} for t, v in zip(chunks, vecs)]}
-        changed = True
-        log(f"  + वाचली: {name} ({len(chunks)} तुकडे)")
+        INDEX["files"][name] = {"sha1": digest, "chunks": [
+            {"text": t, "vec": [round(x, 5) for x in v]} for t, v in zip(chunks, vecs)]}
+        save()   # प्रत्येक फाइलनंतर save — मध्येच बंद पडले तरी केलेले काम राहते
+        changed = False
     if changed:
-        tmp = INDEX_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(INDEX, f, ensure_ascii=False)
-        os.replace(tmp, INDEX_FILE)
+        save()
     rebuild_vecs()
     return len(INDEX["files"]), len(VECS)
 
@@ -234,6 +269,11 @@ def search(query):
     if not VECS:
         return []
     q = embed([query])[0]
+    if MAT is not None:
+        qv = np.array(q, dtype=np.float32); qv /= max(float(np.linalg.norm(qv)), 1e-8)
+        sims = MAT @ qv
+        top = np.argsort(-sims)[:TOP_K]
+        return [(float(sims[i]), VECS[i][0], VECS[i][1]) for i in top if sims[i] >= MIN_SCORE]
     qn = math.sqrt(sum(x * x for x in q)) or 1.0
     scored = []
     for name, text, vec, n in VECS:
@@ -420,6 +460,11 @@ def main():
             stream.reconfigure(encoding="utf-8")   # Windows console मध्ये मराठी दिसावे
         except Exception:
             pass
+    if "--index" in sys.argv:           # फक्त ग्रंथ वाचणे (embedding), chat नाही
+        load_index()
+        nf, nc = build_index(lambda m: print(m, flush=True))
+        print(f"✅ {nf} फाइल्स, {nc} तुकडे तयार.")
+        return
     if "--ask" in sys.argv:
         ask_cli(sys.argv[sys.argv.index("--ask") + 1:])
         return

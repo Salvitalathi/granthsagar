@@ -22,6 +22,8 @@
 
 | कसे | काय करायचे |
 |---|---|
+| आधीच समाविष्ट | अथर्ववेद (Whitney भाषांतरासह), सुश्रुत संहिता, चरक संहिता — `granth/` मध्ये |
+| DCS वरून आणखी (पुराणे, अष्टांगहृदय, भावप्रकाश…) | `python scripts/dcs_granth.py --list` → उदा. `python scripts/dcs_granth.py bhagavata garuda` (git लागते) |
 | GRETIL वरून (संस्कृत) | `python scripts/download_granth.py` → `python granth_tayar.py` |
 | इतर कोणताही ग्रंथ | `.txt`, `.pdf` किंवा `.docx` फाइल `granth/` folder मध्ये टाका |
 | GRETIL वरील पुराणे | `python scripts/download_granth.py purana` → `python granth_tayar.py` |
@@ -43,3 +45,10 @@ tests/                 offline tests + live test चे प्रश्न
 
 - **Tests (offline):** प्रत्येक push वर आपोआप चालतो
 - **Live test (खरा AI):** Actions → "Live test" → Run workflow. GitHub वर Ollama चालवून, ग्रंथ उतरवून `tests/questions.txt` मधील प्रश्न विचारतो. उत्तरे run च्या Summary पानावर दिसतात.
+
+## स्रोत आणि श्रेय
+
+- संस्कृत मजकूर: **Digital Corpus of Sanskrit** (Oliver Hellwig), https://github.com/OliverHellwig/sanskrit — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). देवनागरीत रूपांतर आणि भाग पाडणे ग्रंथसागरने केले आहे.
+- अथर्ववेद इंग्रजी भाषांतर: W. D. Whitney & C. R. Lanman (1905), public domain (DCS मार्फत).
+- चरक संहितेचे DCS मध्ये उपलब्ध असलेले अध्यायच समाविष्ट आहेत (पूर्ण ग्रंथ नाही).
+- GRETIL (Göttingen) वरील मजकूर त्यांच्या license नुसार.

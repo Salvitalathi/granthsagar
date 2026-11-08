@@ -1,31 +1,41 @@
 name: Live test (खरा AI)
-# GitHub वर Ollama + Qwen चालवून, GRETIL वरून ग्रंथ उतरवून, tests/questions.txt मधील प्रश्न विचारतो.
-# उत्तरे: Actions -> या run चे "Summary" पान, आणि "answers" artifact.
+# GitHub वर Ollama + Qwen चालवून granth/ मधील ग्रंथ वाचतो आणि tests/questions.txt मधील प्रश्न विचारतो.
+# उत्तरे: Actions -> या run चे "Summary" पान.
+# पहिल्यांदा ग्रंथ "वाचायला" (embedding) वेळ लागतो; ते काम cache मध्ये राहते, पुढचे runs जलद.
 on:
   workflow_dispatch:
     inputs:
       model:
         description: "Chat model"
         default: "qwen2.5:7b"
-      patterns:
-        description: "GRETIL फाइल-नावातील शब्द (space ने वेगळे; रिकामे = default ग्रंथ)"
-        default: ""
+      folders:
+        description: "granth/ मधील कोणते folders वापरायचे (space ने वेगळे)"
+        default: "atharvaveda sushruta charaka"
   push:
     branches: [main]
-    paths: ["granthsagar.py", "granth_tayar.py", "scripts/**", "tests/questions.txt", ".github/workflows/live.yml"]
+    paths: ["granthsagar.py", "tests/questions.txt", ".github/workflows/live.yml"]
 
 jobs:
   live:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     env:
       GS_CHAT_MODEL: ${{ github.event.inputs.model || 'qwen2.5:7b' }}
       GS_EMBED_MODEL: bge-m3
+      FOLDERS: ${{ github.event.inputs.folders || 'atharvaveda sushruta charaka' }}
+      GS_DOCS: ${{ github.workspace }}/ci_granth
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      - run: pip install numpy
+
+      - name: Select texts
+        run: |
+          mkdir -p ci_granth
+          for f in $FOLDERS; do cp -r "granth/$f" ci_granth/; done
+          find ci_granth -name "*.txt" | wc -l
 
       - name: Cache Ollama models
         uses: actions/cache@v4
@@ -39,42 +49,32 @@ jobs:
           docker run -d --name ollama -v ~/.ollama:/root/.ollama -p 11434:11434 ollama/ollama:latest
           for i in $(seq 1 60); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
           for m in "$GS_CHAT_MODEL" "$GS_EMBED_MODEL"; do
-            for i in 1 2 3 4; do docker exec ollama ollama pull "$m" && break || { echo "pull retry $i"; sleep 20; }; done
+            for i in 1 2 3 4; do docker exec ollama ollama pull "$m" >/dev/null && break || { echo "pull retry $i"; sleep 20; }; done
           done
           docker exec ollama ollama list
           sudo chmod -R a+rX ~/.ollama
 
-      - name: Download texts from GRETIL
-        run: |
-          python scripts/download_granth.py --list | tee gretil_list.txt | head -5
-          python scripts/download_granth.py ${{ github.event.inputs.patterns }}
-          ls -la granth_raw
-
-      - name: Convert to Devanagari
-        run: |
-          python granth_tayar.py
-          for f in granth/sanskrit/*.txt; do echo "== $f"; sed -n '1,8p' "$f"; done
-
-      - name: Cache file index (embeddings)
-        uses: actions/cache@v4
+      - name: Restore index
+        uses: actions/cache/restore@v4
         with:
           path: index.json
-          key: index-${{ env.GS_EMBED_MODEL }}-${{ hashFiles('granth/**') }}
+          key: index-${{ env.GS_EMBED_MODEL }}-${{ hashFiles('ci_granth/**') }}
           restore-keys: index-${{ env.GS_EMBED_MODEL }}-
+
+      - name: Read texts (embedding)
+        timeout-minutes: 140
+        run: python -u granthsagar.py --index
+
+      - name: Save index
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: index.json
+          key: index-${{ env.GS_EMBED_MODEL }}-${{ hashFiles('ci_granth/**') }}-${{ github.run_id }}
 
       - name: Ask questions
         run: |
           mapfile -t Q < <(grep -v '^\s*#' tests/questions.txt | grep -v '^\s*$')
-          { echo "# 🪔 ग्रंथसागर — live उत्तरे"; echo; echo "मॉडेल: \`$GS_CHAT_MODEL\`"; echo;
-            ls granth/sanskrit | sed 's/^/- /'; } > answers.md
-          time python granthsagar.py --ask "${Q[@]}" | tee -a answers.md
+          { echo "# 🪔 ग्रंथसागर — live उत्तरे"; echo; echo "मॉडेल: \`$GS_CHAT_MODEL\` · ग्रंथ: $FOLDERS"; echo; } > answers.md
+          time python -u granthsagar.py --ask "${Q[@]}" | tee -a answers.md
           cat answers.md >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: answers
-          path: |
-            answers.md
-            gretil_list.txt
-            granth/sanskrit/

@@ -7,3 +7,5 @@ tiny_ai/*.npz
 answers.md
 ollama.log
 gretil_list.txt
+.cache/
+ci_granth/
