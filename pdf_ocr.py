@@ -16,7 +16,7 @@ PDF ग्रंथ -> स्वच्छ मजकूर (ग्रंथसा
        pip install pypdfium2 pillow   (Poppler असेल तर तेही चालते)
 हिंदी/मराठी भाषेची फाइल नसेल तर ती एकदाच इंटरनेटवरून "tessdata" folder मध्ये उतरवली जाते.
 """
-import argparse, glob, json, os, re, shutil, subprocess, sys, tempfile, urllib.request
+import argparse, contextlib, glob, json, os, re, shutil, subprocess, sys, tempfile, urllib.request, zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -49,8 +49,13 @@ def find_tesseract():
     return None
 
 
+_LANG_FAILED = {}
+
+
 def ensure_lang(tess, lang):
     """भाषा फाइल (hin/mar) उपलब्ध करा. tessdata-dir परत देतो (None = Tesseract चा स्वतःचा)."""
+    if lang in _LANG_FAILED:                      # या वेळी आधीच अपयशी — पुन्हा उतरवू नका
+        raise OCRSetupError(_LANG_FAILED[lang])
     have = run([tess, "--list-langs"]).stdout.split()
     if lang in have:
         return None
@@ -64,6 +69,8 @@ def ensure_lang(tess, lang):
                 f.write(r.read())
             os.replace(path + ".tmp", path)
         except Exception as e:
+            _LANG_FAILED[lang] = (f"{LANGS.get(lang, lang)} भाषेची OCR फाइल मिळाली नाही ({e}). "
+                                  f"इंटरनेट चालू ठेवून ग्रंथसागर पुन्हा सुरू करा.")
             raise OCRSetupError(f"{LANGS.get(lang, lang)} भाषेची OCR फाइल मिळाली नाही ({e}). "
                                 f"इंटरनेट चालू ठेवून पुन्हा प्रयत्न करा, किंवा Tesseract install करताना "
                                 f"'Additional language data' मध्ये Hindi/Marathi निवडा.")
@@ -92,12 +99,22 @@ def renderer():
 
 
 # ---------------- PDF वाचणे ----------------
+@contextlib.contextmanager
+def _pdfium_doc(pdf):
+    """file handle ने उघडा — Windows वर देवनागरी path सुरक्षित"""
+    import pypdfium2 as pdfium
+    fh = open(pdf, "rb")
+    doc = pdfium.PdfDocument(fh)
+    try:
+        yield doc
+    finally:
+        doc.close(); fh.close()
+
+
 def page_count(pdf):
     if renderer() == "pdfium":
-        import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(pdf)
-        n = len(doc); doc.close()
-        return n
+        with _pdfium_doc(pdf) as doc:
+            return len(doc)
     m = re.search(r"Pages:\s+(\d+)", run(["pdfinfo", pdf]).stdout)
     return int(m.group(1)) if m else 0
 
@@ -105,25 +122,15 @@ def page_count(pdf):
 def page_text(pdf, page):
     """PDF चा स्वतःचा मजकूर (OCR शिवाय)"""
     if renderer() == "pdfium":
-        import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(pdf)
-        try:
-            tp = doc[page - 1].get_textpage()
-            return tp.get_text_range()
-        finally:
-            doc.close()
+        with _pdfium_doc(pdf) as doc:
+            return doc[page - 1].get_textpage().get_text_range()
     return run(["pdftotext", "-f", str(page), "-l", str(page), "-layout", pdf, "-"]).stdout
 
 
 def render_page(pdf, page, png, dpi):
     if renderer() == "pdfium":
-        import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(pdf)
-        try:
-            img = doc[page - 1].render(scale=dpi / 72, grayscale=True).to_pil()
-            img.save(png)
-        finally:
-            doc.close()
+        with _pdfium_doc(pdf) as doc:
+            doc[page - 1].render(scale=dpi / 72, grayscale=True).to_pil().save(png)
         return png
     base = png[:-4]
     run(["pdftoppm", "-f", str(page), "-l", str(page), "-r", str(dpi), "-gray", "-png", "-singlefile", pdf, base])
@@ -171,7 +178,72 @@ def slugify(name):
 
 
 # ---------------- मुख्य काम ----------------
-def process_pdf(pdf, name, out_dir, lang="hin", jobs=None, dpi=300, force_ocr=False, progress=print):
+def detect_lang(pdf, n, tess, work, progress=print):
+    """मधली 2 पाने hin आणि mar ने वाचून ज्याचा OCR-confidence जास्त ती भाषा"""
+    pages = sorted({max(1, n // 3), max(1, (2 * n) // 3)})
+    score = {}
+    for lang in ("hin", "mar"):
+        try:
+            tessdata = ensure_lang(tess, lang)
+        except OCRSetupError:
+            continue
+        confs = []
+        for p in pages:
+            png = render_page(pdf, p, os.path.join(work, f"lang{p}.png"), 200)
+            if not png:
+                continue
+            cmd = [tess, png, "stdout", "-l", lang, "--psm", "3"] + \
+                  (["--tessdata-dir", tessdata] if tessdata else []) + ["tsv"]
+            for row in run(cmd).stdout.splitlines()[1:]:
+                c = row.split("\t")
+                if len(c) == 12 and DEVA.search(c[11]):
+                    try:
+                        confs.append(float(c[10]))
+                    except ValueError:
+                        pass
+        score[lang] = sum(confs) / len(confs) if confs else 0.0
+    for f in glob.glob(os.path.join(work, "lang*.png")):
+        os.remove(f)
+    if not score:
+        raise OCRSetupError("हिंदी/मराठी OCR भाषा उपलब्ध नाही (इंटरनेट चालू ठेवून पुन्हा प्रयत्न करा).")
+    best = max(score, key=score.get)
+    progress(f"🔤 भाषा ओळखली: {LANGS[best]} ({', '.join(f'{k} {v:.0f}' for k, v in score.items())})")
+    return best
+
+
+def _zip_member_name(info):
+    if info.flag_bits & 0x800:
+        return info.filename
+    try:                                  # Windows Explorer च्या zip मधील देवनागरी नावे
+        return info.filename.encode("cp437").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return info.filename
+
+
+def extract_zip(path, dest, depth=0):
+    """zip-slip सुरक्षित extract (आतील zip एका पातळीपर्यंत). परत: काढलेल्या फाइल्स"""
+    files = []
+    with zipfile.ZipFile(path) as z:
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            parts = [re.sub(r'[<>:"|?*\x00-\x1f]+', "_", p).strip(" .") or "_"
+                     for p in _zip_member_name(info).replace("\\", "/").split("/") if p not in ("", ".", "..")]
+            if not parts:
+                continue
+            target = os.path.join(dest, *parts)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with z.open(info) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            if target.lower().endswith(".zip") and depth < 1:
+                files += extract_zip(target, target[:-4], depth + 1)
+                os.remove(target)
+            else:
+                files.append(target)
+    return files
+
+
+def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=False, progress=print):
     """PDF -> out_dir/<slug>/part_XX.txt. परत: (पाने, output folder)"""
     jobs = jobs or max(1, (os.cpu_count() or 2) - 1)
     n = page_count(pdf)
@@ -190,6 +262,13 @@ def process_pdf(pdf, name, out_dir, lang="hin", jobs=None, dpi=300, force_ocr=Fa
         ok, tess = check_setup(lang)
         if not ok:
             raise OCRSetupError(tess)
+        if lang == "auto":
+            lang_file = os.path.join(work, "lang")
+            if os.path.exists(lang_file):
+                lang = open(lang_file).read().strip()
+            else:
+                lang = detect_lang(pdf, n, tess, work, progress)
+                open(lang_file, "w").write(lang)
         tessdata = ensure_lang(tess, lang)
         env = dict(os.environ, OMP_THREAD_LIMIT="1")
 
@@ -245,7 +324,7 @@ def main():
     ap.add_argument("pdf")
     ap.add_argument("--name", help="ग्रंथाचे नाव (शीर्षकात येईल); नसेल तर फाइलचे नाव")
     ap.add_argument("--out", default=os.path.join(HERE, "granth", "pdf"))
-    ap.add_argument("--lang", default="hin", help="hin (हिंदी/संस्कृत), mar (मराठी), san")
+    ap.add_argument("--lang", default="auto", help="auto (आपोआप), hin (हिंदी/संस्कृत), mar (मराठी), san")
     ap.add_argument("--jobs", type=int)
     ap.add_argument("--dpi", type=int, default=300)
     ap.add_argument("--force-ocr", action="store_true")

@@ -76,6 +76,35 @@ if pdf_ocr.check_setup()[0] and FONT:
 else:
     print("⏭  PDF OCR test सोडला (Tesseract/pypdfium2/font नाही)")
 
+# ---- 2d. zip -> extract -> OCR (भाषा आपोआप) ----
+if pdf_ocr.check_setup()[0]:
+    class _CP(zipfile.ZipInfo):                  # Windows Explorer सारखी zip (UTF-8 flag नाही)
+        def _encodeFilenameFlags(self):
+            return self.filename.encode("cp437"), self.flag_bits & ~0x800
+    zt = tempfile.mkdtemp()
+    gs.PDF_INBOX, gs.DOCS_DIR = os.path.join(zt, "pdf_inbox"), os.path.join(zt, "granth")
+    gs.PDF_OUT = os.path.join(gs.DOCS_DIR, "pdf")
+    os.makedirs(gs.PDF_INBOX)
+    with zipfile.ZipFile(os.path.join(gs.PDF_INBOX, "आयुर्वेद संग्रह.zip"), "w") as z:
+        z.writestr(_CP("ग्रंथ/चाचणी ग्रंथ.pdf".encode("utf-8").decode("cp437")),
+                   open(os.path.join(ROOT, "tests", "data", "sample_scan.pdf"), "rb").read())
+        z.writestr(_CP("टीप.txt".encode("utf-8").decode("cp437")), "हळद आणि दूध")
+        z.writestr("../../evil.txt", "x")
+    n_txt = gs.unpack_zips(lambda *_: None)
+    pdfs = gs.pending_pdfs()
+    check("zip: देवनागरी नावे + PDF सापडली", any(p.endswith("चाचणी ग्रंथ.pdf") for p in pdfs))
+    check("zip: मजकूर-फाइल थेट granth/pdf मध्ये",
+          n_txt >= 1 and os.path.exists(os.path.join(gs.PDF_OUT, "आयुर्वेद संग्रह", "टीप.txt")))
+    check("zip: zip-slip बाहेर नाही", not os.path.exists(os.path.join(zt, "evil.txt"))
+          and not os.path.exists(os.path.join(os.path.dirname(zt), "evil.txt")))
+    check("zip: मूळ zip done मध्ये", os.path.exists(os.path.join(gs.PDF_INBOX, "done", "आयुर्वेद संग्रह.zip"))
+          and not gs.pending_zips())
+    pdf = next(p for p in pdfs if p.endswith(".pdf"))
+    n, dest = pdf_ocr.process_pdf(pdf, "चाचणी ग्रंथ", gs.PDF_OUT, lang="auto", jobs=1, progress=lambda m: None)
+    txt = open(os.path.join(dest, "part_01.txt"), encoding="utf-8").read()
+    check("zip: OCR (भाषा आपोआप) + पान शीर्षक", n == 2 and "[चाचणी ग्रंथ पृ. 2]" in txt and "मिश्रणाने" in txt)
+    shutil.rmtree(zt, ignore_errors=True)
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)

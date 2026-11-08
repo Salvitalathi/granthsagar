@@ -440,7 +440,7 @@ def docs_report():
         ready, why = (pdf_ocr.check_setup() if pdf_ocr else (False, "pdf_ocr.py सापडली नाही"))
         lines.append(f"📄 {len(pdfs)} PDF मजकुरात बदलायच्या आहेत" + ("" if ready else f" — पण: {why}"))
     for z in zips:
-        lines.append(f"⚠️ {z} ही zip अजून extract केलेली नाही — तिच्यावर right-click → Extract All करा")
+        lines.append(f"📦 {z} — ही zip आपोआप extract होऊन आतील PDF मजकुरात बदलतील")
     # नेहमीची चूक: granth च्या बाहेर बनवलेला folder
     for name in os.listdir(HERE):
         p = os.path.join(HERE, name)
@@ -483,6 +483,48 @@ def start_indexing():
     return True
 
 
+TEXT_EXT = (".txt", ".md", ".csv", ".docx")
+
+
+def pending_zips():
+    out = []
+    for base in (PDF_INBOX, DOCS_DIR):
+        if os.path.isdir(base):
+            for root, dirs, files in os.walk(base):
+                dirs[:] = [d for d in dirs if d != "done"]
+                out += [os.path.join(root, f) for f in sorted(files) if f.lower().endswith(".zip")]
+    return out
+
+
+def unpack_zips(log=print):
+    """zip -> pdf_inbox/<नाव>/ (PDF OCR साठी), आतील मजकूर-फाइल्स थेट granth/pdf/<नाव>/. परत: मजकूर-फाइल्स संख्या"""
+    texts = 0
+    for z in pending_zips():
+        stem = os.path.splitext(os.path.basename(z))[0]
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", stem).strip(" .") or "zip"
+        log(f"📦 {os.path.basename(z)} extract करत आहे…")
+        try:
+            files = pdf_ocr.extract_zip(z, os.path.join(PDF_INBOX, safe))
+        except Exception as e:
+            log(f"⚠️ {os.path.basename(z)}: zip उघडता आली नाही ({e})")
+            files = None
+        if files is not None:
+            for f in files:
+                if f.lower().endswith(TEXT_EXT):
+                    d = os.path.join(PDF_OUT, safe)
+                    os.makedirs(d, exist_ok=True)
+                    shutil.move(f, os.path.join(d, os.path.basename(f))); texts += 1
+            if not any(f.lower().endswith((".pdf",) + TEXT_EXT) for f in files):
+                log(f"⚠️ {os.path.basename(z)} मध्ये PDF/मजकूर फाइल नाही")
+        done = os.path.join(PDF_INBOX, "done")
+        os.makedirs(done, exist_ok=True)
+        target = os.path.join(done, os.path.basename(z))
+        if os.path.exists(target):
+            target = os.path.join(done, f"{int(time.time())}_{os.path.basename(z)}")
+        shutil.move(z, target)
+    return texts
+
+
 def pending_pdfs():
     """pdf_inbox आणि granth मध्ये टाकलेल्या, अजून मजकूर न झालेल्या PDF"""
     out = []
@@ -497,7 +539,11 @@ def pending_pdfs():
 
 def start_ocr():
     """पार्श्वभूमीत PDF -> मजकूर, मग आपोआप वाचन"""
-    if pdf_ocr is None or OCR_STATUS["running"] or not pending_pdfs():
+    if pdf_ocr is None or OCR_STATUS["running"]:
+        return False
+    if pending_zips() and unpack_zips(lambda m: (print(m, flush=True), OCR_STATUS.update(msg=m))):
+        start_indexing()                  # zip मधील तयार मजकूर लगेच वाचा
+    if not pending_pdfs():
         return False
 
     def work():
@@ -517,7 +563,7 @@ def start_ocr():
                         meta = json.load(f)
                 name = meta.get("name") or os.path.splitext(os.path.basename(pdf))[0].replace("_", " ")
                 with OCR_LOCK:
-                    pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "hin"), progress=log)
+                    pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "auto"), progress=log)
                 # मूळ PDF बाजूला ठेवा (परत OCR होऊ नये)
                 done = os.path.join(PDF_INBOX, "done")
                 os.makedirs(done, exist_ok=True)
@@ -525,6 +571,13 @@ def start_ocr():
                 if os.path.exists(target):
                     target = os.path.join(done, f"{int(time.time())}_{os.path.basename(pdf)}")
                 shutil.move(pdf, target)
+                parent = os.path.dirname(pdf)          # zip मधून आलेले रिकामे folders साफ
+                while os.path.abspath(parent).startswith(os.path.abspath(PDF_INBOX) + os.sep):
+                    try:
+                        os.rmdir(parent)
+                    except OSError:
+                        break
+                    parent = os.path.dirname(parent)
                 if os.path.exists(pdf + ".json"):
                     os.remove(pdf + ".json")
                 OCR_STATUS["done"].append(name)
@@ -544,7 +597,8 @@ def start_ocr():
 def save_upload(rfile, length, filename, name, lang):
     os.makedirs(PDF_INBOX, exist_ok=True)
     safe = re.sub(r'[\\/:*?"<>|]+', "_", os.path.basename(filename or "granth.pdf"))
-    if not safe.lower().endswith(".pdf"):
+    is_zip = safe.lower().endswith(".zip")
+    if not is_zip and not safe.lower().endswith(".pdf"):
         safe += ".pdf"
     path = os.path.join(PDF_INBOX, safe)
     if os.path.exists(path):
@@ -557,13 +611,29 @@ def save_upload(rfile, length, filename, name, lang):
                 break
             f.write(chunk); left -= len(chunk)
     with open(path + ".part", "rb") as f:
-        if f.read(5) != b"%PDF-":
-            os.remove(path + ".part")
-            raise ValueError("ही फाइल PDF नाही.")
+        head = f.read(5)
+    if (is_zip and head[:2] != b"PK") or (not is_zip and head != b"%PDF-"):
+        os.remove(path + ".part")
+        raise ValueError("ही फाइल PDF/zip नाही.")
+    if is_zip:
+        os.replace(path + ".part", path)
+        return path
     with open(path + ".json", "w", encoding="utf-8") as f:
         json.dump({"name": name.strip() or os.path.splitext(safe)[0], "lang": lang}, f, ensure_ascii=False)
     os.replace(path + ".part", path)
     return path
+
+
+def watch_folders():
+    """दर 20 सेकंदांनी pdf_inbox/granth तपासा — नवीन PDF/zip आली की आपोआप काम सुरू"""
+    while True:
+        time.sleep(20)
+        try:
+            if pdf_ocr and not OCR_STATUS["running"] and (pending_zips() or pending_pdfs()):
+                print("📥 नवीन PDF/zip सापडली — काम सुरू", flush=True)
+                start_ocr()
+        except Exception:
+            pass
 
 
 # ===================== Web chat =====================
@@ -593,10 +663,10 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
 <button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
 <button class="ghost" onclick="hist=[];chat.innerHTML=''">🧹 नवीन</button></header>
 <div id="pdfPanel" hidden>
- <b>📄 PDF ग्रंथ जोडा</b> — scan केलेली किंवा कोणत्याही font मधील PDF चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.
- <div class="row"><input type="file" id="pf" accept=".pdf,application/pdf" multiple onchange="pfName()">
+ <b>📄 PDF ग्रंथ जोडा</b> — scan केलेली किंवा कोणत्याही font मधील PDF, किंवा PDF असलेली zip चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.
+ <div class="row"><input type="file" id="pf" accept=".pdf,.zip,application/pdf,application/zip" multiple onchange="pfName()">
  <input id="pn" placeholder="ग्रंथाचे नाव (उदा. चरक संहिता हिंदी टीका भाग 1)">
- <select id="pl"><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select>
+ <select id="pl"><option value="auto">भाषा आपोआप ओळखा</option><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select>
  <button onclick="uploadPdfs()">अपलोड</button></div>
  <div id="pmsg"></div>
 </div>
@@ -607,7 +677,7 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
 const chat=document.getElementById('chat'),q=document.getElementById('q'),st=document.getElementById('st');let hist=[],busy=false;
 function add(cls,t){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=1e9;return d}
 const pdfPanel=document.getElementById('pdfPanel'),pf=document.getElementById('pf'),pn=document.getElementById('pn'),pl=document.getElementById('pl'),pmsg=document.getElementById('pmsg');
-function pfName(){if(pf.files.length===1){pn.value=pf.files[0].name.replace(/\.pdf$/i,'').replace(/[_-]+/g,' ')}else if(pf.files.length>1){pn.value='';pn.placeholder='अनेक फाइल्स — प्रत्येकीचे नाव फाइल-नावावरून'}}
+function pfName(){if(pf.files.length===1){pn.value=pf.files[0].name.replace(/\.(pdf|zip)$/i,'').replace(/[_-]+/g,' ')}else if(pf.files.length>1){pn.value='';pn.placeholder='अनेक फाइल्स — प्रत्येकीचे नाव फाइल-नावावरून'}}
 function upOne(file,name){return new Promise(res=>{const x=new XMLHttpRequest();
  x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value);
  x.upload.onprogress=e=>{if(e.lengthComputable)pmsg.textContent=`⬆ ${file.name}: ${Math.round(e.loaded*100/e.total)}%`};
@@ -688,7 +758,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 path = save_upload(self.rfile, int(self.headers.get("Content-Length", 0)),
                                    qs.get("file", ["granth.pdf"])[0], qs.get("name", [""])[0],
-                                   qs.get("lang", ["hin"])[0])
+                                   qs.get("lang", ["auto"])[0])
                 start_ocr()
                 self._json({"ok": True, "msg": f"📥 {os.path.basename(path)} मिळाली — मजकूर बनवणे सुरू (प्रगती वर दिसेल)."})
             except Exception as e:
@@ -850,6 +920,8 @@ def main():
         print("📖 नवीन/बदललेले ग्रंथ पार्श्वभूमीत वाचत आहे — chat लगेच वापरता येईल.")
         start_ocr()
         start_indexing()
+    if pdf_ocr:
+        threading.Thread(target=watch_folders, daemon=True).start()
     url = f"http://127.0.0.1:{PORT}"
     print(f"🌐 {url}  (बंद करण्यासाठी Ctrl+C)")
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
