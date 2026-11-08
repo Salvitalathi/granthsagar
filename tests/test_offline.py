@@ -143,6 +143,14 @@ if pdf_ocr.check_setup()[0]:
     n, dest = pdf_ocr.process_pdf(pdf, "चाचणी ग्रंथ", gs.PDF_OUT, lang="auto", jobs=1, progress=lambda m: None)
     txt = open(os.path.join(dest, "part_01.txt"), encoding="utf-8").read()
     check("zip: OCR (भाषा आपोआप) + पान शीर्षक", n == 2 and "[चाचणी ग्रंथ पृ. 2]" in txt and "मिश्रणाने" in txt)
+    try:
+        pdf_ocr.ensure_langs(pdf_ocr.find_tesseract(), ["mar", "san"]); _have_mar = True
+    except Exception:
+        _have_mar = False
+    if _have_mar:   # मराठी पुस्तक -> mar+san (हिंदी मॉडेल 'त्रिफव्ठा', 'सकाठ्ठी' असे वाचते)
+        check("zip: मराठी ओळखली — ळ अचूक (त्रिफळा, सकाळी)", "त्रिफळा" in txt and "सकाळी" in txt)
+    else:
+        print("⏭  मराठी OCR test सोडला (mar भाषा-फाइल नाही)")
     shutil.rmtree(zt, ignore_errors=True)
 
 # ---- 3. App + बनावट Ollama ----

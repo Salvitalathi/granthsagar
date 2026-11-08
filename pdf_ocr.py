@@ -300,8 +300,9 @@ def detect_lang(pdf, n, tess, work, progress=print):
             png = render_page(pdf, p, os.path.join(work, f"lang{p}.png"), 200)
             if not png:
                 continue
-            cmd = [tess, png, "stdout", "-l", lang, "--psm", "3"] + \
-                  (["--tessdata-dir", tessdata] if tessdata else []) + ["tsv"]
+            # 'tsv' config-फाइल स्थानिक tessdata मध्ये नसते — म्हणून थेट setting
+            cmd = [tess, png, "stdout", "-l", lang, "--psm", "3", "-c", "tessedit_create_tsv=1"] + \
+                  (["--tessdata-dir", tessdata] if tessdata else [])
             for row in run(cmd).stdout.splitlines()[1:]:
                 c = row.split("\t")
                 if len(c) == 12 and DEVA.search(c[11]):
