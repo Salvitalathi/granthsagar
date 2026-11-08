@@ -35,11 +35,19 @@ jobs:
 
       - name: Install & start Ollama
         run: |
-          curl -fsSL https://ollama.com/install.sh | sh
+          set -e
+          for i in 1 2 3 4; do curl -fsSL --retry 3 https://ollama.com/install.sh | sh && break || { echo "retry $i"; sleep 20; }; done
+          if ! command -v ollama; then
+            echo "install.sh चालला नाही — GitHub releases वरून घेत आहे"
+            base=https://github.com/ollama/ollama/releases/latest/download
+            if curl -fL --retry 5 -o /tmp/o.tgz $base/ollama-linux-amd64.tgz; then sudo tar -C /usr -xzf /tmp/o.tgz
+            else curl -fL --retry 5 -o /tmp/o.tzst $base/ollama-linux-amd64.tar.zst && sudo tar -C /usr --zstd -xf /tmp/o.tzst; fi
+          fi
           (ollama serve > ollama.log 2>&1 &)
           for i in $(seq 1 30); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
-          ollama pull "$GS_CHAT_MODEL"
-          ollama pull "$GS_EMBED_MODEL"
+          for m in "$GS_CHAT_MODEL" "$GS_EMBED_MODEL"; do
+            for i in 1 2 3 4; do ollama pull "$m" && break || { echo "pull retry $i"; sleep 20; }; done
+          done
           ollama list
 
       - name: Download texts from GRETIL
