@@ -113,7 +113,8 @@ RED_FLAG_MSG = EMERGENCY_MSG   # जुन्या नावासाठी
 
 MARATHI_REMINDER = ("\n\n(सूचना: उत्तर फक्त शुद्ध मराठीत लिहा — 'है', 'हैं', 'का', 'की', 'में', 'किया', "
                     "'इस प्रकार' असे हिंदी शब्द वापरू नका. एकच वाक्य पुन्हा लिहू नका. "
-                    "इंग्रजी शब्द वापरू नका (Whitney भाषांतर फक्त समजण्यासाठी आहे, उद्धृत करू नका). "
+                    "इंग्रजी शब्द वापरू नका, कंसातही नाही (Whitney भाषांतर फक्त समजण्यासाठी आहे, उद्धृत करू नका). "
+                    "संदर्भ जसाच्या तसा पूर्ण छापू नका — फक्त संबंधित १-२ ओळी उद्धृत करा आणि बाकी मराठीत समजावा. "
                     "संदर्भात नसलेला श्लोक, क्रमांक किंवा ग्रंथ-नाव बनवू नका; शब्दाचा अर्थ खात्री नसेल तर तसे सांगा.)")
 
 SUPPORTED = (".txt", ".md", ".csv", ".pdf", ".docx")
@@ -547,7 +548,7 @@ def answer_events(question, history=()):
     messages = [{"role": "system", "content": prompt}] + list(history) + \
                [{"role": "user", "content": user_msg}]
     payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
-               "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.3,
+               "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.2,
                            "top_p": 0.9, "repeat_penalty": 1.05, "repeat_last_n": 64}}
     if CHAT_MODEL.startswith(("qwen3", "deepseek-r1", "gemma4")):
         payload["think"] = False      # "विचार" मोड बंद — थेट उत्तर
