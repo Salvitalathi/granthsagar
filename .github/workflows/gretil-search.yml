@@ -1,0 +1,21 @@
+name: GRETIL search
+# GRETIL वरील ग्रंथांची नावे शोधा: Actions -> GRETIL search -> Run workflow -> शब्द (regex)
+on:
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: "शोध (regex, उदा. atharva|suzruta|purANa)"
+        default: "atharva|avs|zaunak|suzruta|carak|purANa|indrajAl|bhAvaprak|mAdhava|zArGgadhar|vAgbhaT|bhela|kAzyap"
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python scripts/download_granth.py --list > list.txt
+          echo "एकूण: $(grep -c http list.txt)"
+          grep -iE "${{ github.event.inputs.pattern }}" list.txt | tee -a "$GITHUB_STEP_SUMMARY" || echo "काहीही सापडले नाही"
+          echo "--- size check ---"
+          for u in $(grep -iE "${{ github.event.inputs.pattern }}" list.txt | head -40); do
+            echo "$(curl -sI "$u" | grep -i content-length | tr -d '\r' | awk '{print int($2/1024)" KB"}') $u"
+          done
