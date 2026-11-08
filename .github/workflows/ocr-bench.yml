@@ -1,0 +1,22 @@
+name: OCR benchmark
+on: workflow_dispatch
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-hin tesseract-ocr-san tesseract-ocr-mar >/dev/null
+          pip install -q pypdfium2 pillow
+          tesseract --version | head -1
+          for v in tessdata tessdata_best tessdata_fast; do
+            mkdir -p /tmp/$v
+            for l in hin san mar; do curl -sSL -o /tmp/$v/$l.traineddata https://github.com/tesseract-ocr/$v/raw/main/$l.traineddata; done
+            ls -la /tmp/$v
+          done
+      - run: |
+          { echo "| data | lang | psm | stage | ॐ | अचूकता |"; echo "|---|---|---|---|---|---|";
+            python tests/ocr_bench.py - hin san hin+san san+hin mar+san;
+            for v in tessdata tessdata_best tessdata_fast; do python tests/ocr_bench.py /tmp/$v hin san hin+san san+hin; done; } | tee -a "$GITHUB_STEP_SUMMARY"
