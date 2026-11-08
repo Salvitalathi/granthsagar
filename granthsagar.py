@@ -39,8 +39,8 @@ def total_ram_gb():
         return 8.0
 
 
-# 12 GB पेक्षा कमी RAM असेल तर लहान (3B) मॉडेल, नाहीतर 7B — हवे तर GS_CHAT_MODEL ने बदला
-CHAT_MODEL = os.environ.get("GS_CHAT_MODEL") or ("qwen2.5:7b" if total_ram_gb() >= 12 else "qwen2.5:3b")
+# तुलनेत (2026-11) मराठीसाठी सर्वोत्तम: gemma3:4b (8 GB RAM पुरेशी). 6 GB पेक्षा कमी RAM असेल तर gemma3:1b.
+CHAT_MODEL = os.environ.get("GS_CHAT_MODEL") or ("gemma3:4b" if total_ram_gb() >= 6 else "gemma3:1b")
 EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
@@ -73,7 +73,7 @@ GRANTH_PROMPT = """तू "ग्रंथसागर" आहेस — वे�
 - संदर्भात नसलेला श्लोक, संदर्भ क्रमांक, कथा किंवा औषधाचे प्रमाण कधीही बनवू नकोस. संदर्भात उत्तर नसेल तर "उपलब्ध ग्रंथांमध्ये हे सापडले नाही" असे स्पष्ट सांग, आणि मग सामान्य माहिती देत असशील तर तसे नमूद कर.
 - ग्रंथातील दावे "ग्रंथानुसार…" / "परंपरेनुसार…" असे मांड; ते सिद्ध सत्य किंवा खात्रीचा परिणाम म्हणून सांगू नकोस.
 - आयुर्वेद: रसौषधी / भस्म (पारा, शिसे, आर्सेनिक, गंधक इ.) यांचे प्रमाण किंवा घरी बनवण्याची पद्धत सांगू नकोस — "वैद्यांच्या देखरेखीखालीच" असे सांग. गर्भवती, लहान मुले, वृद्ध, किंवा BP/साखर/रक्त पातळ करणारी औषधे घेणारे — यांना वैद्य/डॉक्टरांना विचारण्यास ठळकपणे सांग. डॉक्टरांनी दिलेली औषधे बंद करायला कधीही सांगू नकोस.
-- मंत्र-तंत्र (इंद्रजाल, अथर्ववेदातील अभिचार इ.): मंत्राचा अर्थ, परंपरा आणि ऐतिहासिक संदर्भ समजाव. पण धोतरा, कुचला, पारा यांसारखे विषारी पदार्थ खाऊ घालण्याची किंवा वापरण्याची कृती, किंवा कोणाला इजा पोहोचवण्याची प्रत्यक्ष पद्धत सांगू नकोस."""
+- मंत्र-तंत्र ग्रंथ: मंत्राचा अर्थ, परंपरा आणि ऐतिहासिक संदर्भ समजाव. पण धोतरा, कुचला, पारा यांसारखे विषारी पदार्थ खाऊ घालण्याची किंवा वापरण्याची कृती, किंवा कोणाला इजा पोहोचवण्याची प्रत्यक्ष पद्धत सांगू नकोस."""
 
 # गंभीर लक्षणे — यांपैकी काही दिसले तर उत्तराआधी लाल सूचना दाखवली जाते
 # आपत्कालीन लक्षणे — AI उपाय सांगत नाही, फक्त डॉक्टरांकडे जाण्याची सूचना
@@ -113,7 +113,8 @@ RED_FLAG_MSG = EMERGENCY_MSG   # जुन्या नावासाठी
 
 MARATHI_REMINDER = ("\n\n(सूचना: उत्तर फक्त शुद्ध मराठीत लिहा — 'है', 'हैं', 'का', 'की', 'में', 'किया', "
                     "'इस प्रकार' असे हिंदी शब्द वापरू नका. एकच वाक्य पुन्हा लिहू नका. "
-                    "संदर्भात नसलेला श्लोक किंवा क्रमांक बनवू नका. श्लोक उद्धृत करताना संदर्भातील देवनागरी जसाच्या तसा घ्या.)")
+                    "इंग्रजी शब्द वापरू नका (Whitney भाषांतर फक्त समजण्यासाठी आहे, उद्धृत करू नका). "
+                    "संदर्भात नसलेला श्लोक, क्रमांक किंवा ग्रंथ-नाव बनवू नका; शब्दाचा अर्थ खात्री नसेल तर तसे सांगा.)")
 
 SUPPORTED = (".txt", ".md", ".csv", ".pdf", ".docx")
 
@@ -390,15 +391,16 @@ def search(query):
             sims = sims + boost
         top = np.argsort(-sims)[:TOP_K]
         hits = [(float(sims[i]), VECS[i][0], VECS[i][1]) for i in top if sims[i] >= MIN_SCORE]
-        seen = {t for _, _, t in direct}
-        return (direct + [h for h in hits if h[2] not in seen])[:TOP_K + len(direct)]
+        if direct:   # नेमका श्लोक/अध्याय सापडला — तोच द्या, इतर सूक्ते गोंधळ घालतात
+            return direct
+        return hits
     qn = math.sqrt(sum(x * x for x in q)) or 1.0
     scored = []
     for name, text, vec, n in VECS:
         s = sum(a * b for a, b in zip(q, vec)) / (qn * n) + min(0.12, 0.04 * sum(any(k in text for k in alts) for alts in keys))
         scored.append((s, name, text))
     scored.sort(reverse=True)
-    return (direct + [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE])[:TOP_K + len(direct)]
+    return direct or [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE]
 
 
 # ===================== Web chat =====================
@@ -546,8 +548,8 @@ def answer_events(question, history=()):
                [{"role": "user", "content": user_msg}]
     payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
                "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.3,
-                           "top_p": 0.9, "repeat_penalty": 1.15, "repeat_last_n": 256}}
-    if CHAT_MODEL.startswith(("qwen3", "deepseek-r1")):
+                           "top_p": 0.9, "repeat_penalty": 1.05, "repeat_last_n": 64}}
+    if CHAT_MODEL.startswith(("qwen3", "deepseek-r1", "gemma4")):
         payload["think"] = False      # "विचार" मोड बंद — थेट उत्तर
     answer = ""
     try:
