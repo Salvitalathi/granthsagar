@@ -1,0 +1,13 @@
+name: Find sources
+on:
+  workflow_dispatch:
+    inputs:
+      queries:
+        description: "शोध (space ने वेगळे नसलेले — एका ओळीत एक नाही; रिकामे = default)"
+        default: ""
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/find_sources.py ${{ github.event.inputs.queries }}
