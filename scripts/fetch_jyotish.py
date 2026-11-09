@@ -83,6 +83,8 @@ def wiki_clean(t):
     t = re.sub(r"'''?|<[^>]+>|__[A-Z]+__", "", t)
     t = re.sub(r"^[=]+\s*(.*?)\s*[=]+\s*$", r"\1", t, flags=re.M)
     t = re.sub(r"^\s*[:*#;]+\s*", "", t, flags=re.M)
+    t = re.sub(r"^\s*(\{\||\|\}|\|-?|!).*$", "", t, flags=re.M)            # तक्ते
+    t = re.sub(r"^\s*[a-z]+\s*=.*$", "", t, flags=re.M)                       # type=fulltext …
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()
 
@@ -113,6 +115,17 @@ def fetch_wikisource(title, mr, folder):
         if len(re.findall(r"[ऀ-ॿ]", text)) < 80:
             continue
         sub = p.split("/", 1)[1] if "/" in p else "प्रस्तावना"
+        if p == title and len(wiki_pages(title)) > 3 and len(text) < 20000:
+            continue                                   # फक्त अनुक्रमणिका
+        # एकाच मोठ्या पानात संपूर्ण ग्रंथ (उदा. सारावली) — 'प्रथमोऽध्यायः' अशा शीर्षकांवर तोडा
+        heads = list(re.finditer(r"^\s*(\S*ऽध्यायः|अध्यायः\s*[०-९0-9]+.*)\s*$", text, flags=re.M))
+        if len(text) > 60000 and len(heads) > 3:
+            for i, h in enumerate(heads):
+                end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+                chunk = text[h.start():end].strip()
+                if len(chunk) > 200:
+                    blocks.append(f"[{mr} — {h.group(1).strip()}]\n{chunk}")
+            continue
         blocks.append(f"[{mr} — {sub}]\n{text}")
         time.sleep(0.5)
     n = write_parts(os.path.join(OUT, folder), blocks)
@@ -120,8 +133,15 @@ def fetch_wikisource(title, mr, folder):
 
 
 # ---------------- GRETIL ----------------
-REF = re.compile(r"^\s*([A-Za-zĀŚṢ_]{1,8})[_\s.]?(\d[\d.,:]*[a-f]?)\s*[:.]?\s+(.*)$")
-TRAIL = re.compile(r"\s*//\s*([A-Za-zĀŚṢ_]{1,8})[_\s.]?(\d[\d.,:]*[a-f]?)\s*//\s*$")
+NUMREF = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\s*([a-f]{1,2})?\s*[.:]\s*")
+
+
+def gretil_line_to_deva(ln, h_visarga):
+    ln = ln.replace("^", "").replace("+", "").replace("*", "")
+    ln = re.sub(r"\((?:[a-z]\s+)?[^()]{0,40}\)", "", ln)                 # (ब् मयनाम) पाठभेद
+    if h_visarga:                                                        # महासुरह् -> महासुरः
+        ln = re.sub(r"(?<=[aāiīuūeo])h(?=[\s|/.,;]|$)", "ḥ", ln)
+    return iast_to_deva(ln).replace("|", "।")
 
 
 def fetch_gretil(url, mr, folder):
@@ -130,28 +150,26 @@ def fetch_gretil(url, mr, folder):
         if re.match(r"^\s*#\s*text\s*$", ln, flags=re.I):
             lines = lines[k + 1:]
             break
-    blocks, cur, chap = [], [], None
+    h_visarga = "sUryasiddhAnta" in url
+    verses = {}                                   # (अध्याय, श्लोक) -> [पाद]
     for ln in lines:
-        ln = ln.rstrip()
-        if not ln.strip():
+        parts = NUMREF.split(ln)
+        if len(parts) < 5:
             continue
-        ref = None
-        m = TRAIL.search(ln)
-        if m:
-            ref, ln = m.group(2), ln[:m.start()]
-        else:
-            m = REF.match(ln)
-            if m:
-                ref, ln = m.group(2), m.group(3)
-        c = ref.replace(",", ".").split(".")[0] if ref else chap
-        if c != chap and cur:
+        for i in range(1, len(parts) - 3, 4):
+            ch, vs, text = int(parts[i]), int(parts[i + 1]), parts[i + 3].strip()
+            if text:
+                verses.setdefault((ch, vs), []).append(gretil_line_to_deva(text, h_visarga))
+    blocks, cur, chap = [], [], None
+    for (ch, vs), padas in sorted(verses.items()):
+        if ch != chap and cur:
             blocks.append(f"[{mr} अध्याय {chap}]\n" + "\n".join(cur)); cur = []
-        chap = c
-        cur.append((f"({ref.replace(',', '.')}) " if ref else "") + iast_to_deva(ln))
+        chap = ch
+        cur.append(f"({ch}.{vs}) " + " ".join(padas))
     if cur:
         blocks.append(f"[{mr} अध्याय {chap}]\n" + "\n".join(cur))
     n = write_parts(os.path.join(OUT, folder), blocks)
-    print(f"✅ {mr}: {len(blocks)} अध्याय → {n} फाइल्स")
+    print(f"✅ {mr}: {len(blocks)} अध्याय, {len(verses)} श्लोक → {n} फाइल्स")
 
 
 # ---------------- archive.org ----------------
@@ -163,7 +181,9 @@ def fetch_archive(ident, title, folder):
     t = get(f"https://archive.org/download/{ident}/{urllib.parse.quote(txt[0])}").decode("utf-8", "replace")
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"(?im)^.*(digitized by|google|generated .* (on|by)).*$", "", t)     # scan च्या खुणा
-    paras = [p.strip() for p in re.split(r"\n\s*\n", t) if len(p.strip()) > 40]
+    junk = re.compile(r"google|public domain|digitized|book search|discoverable online|marginalia|"
+                      r"usage guidelines|automated querying|watermark|internet archive", re.I)
+    paras = [p.strip() for p in re.split(r"\n\s*\n", t) if len(p.strip()) > 40 and not junk.search(p)]
     blocks, cur, size, k = [], [], 0, 1
     for p in paras:
         cur.append(p); size += len(p)
