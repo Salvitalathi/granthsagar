@@ -50,6 +50,7 @@
 | 🪔 सर्व ग्रंथ | सर्व | `pdf_inbox\` |
 | 🌿 आयुर्वेद | `granth/charaka`, `sushruta`, `atharvaveda`, `granth/pdf/आयुर्वेद` | `pdf_inbox\आयुर्वेद\` |
 | 🪐 ज्योतिष | `granth/jyotish`, `granth/pdf/ज्योतिष` | `pdf_inbox\ज्योतिष\` |
+| 📖 व्याकरण | `granth/vyakarana` (अष्टाध्यायी, काशिका, महाभाष्य, लघुसिद्धान्तकौमुदी, अमरकोश) + वाचस्पत्यम्/शब्दकल्पद्रुम कोश | `pdf_inbox\व्याकरण\` |
 | 📜 पुराण-इतिहास | `granth/pdf/पुराण` | `pdf_inbox\पुराण\` |
 | ॐ वेद-मंत्र | `granth/atharvaveda`, `granth/pdf/मंत्र` | `pdf_inbox\मंत्र\` |
 
