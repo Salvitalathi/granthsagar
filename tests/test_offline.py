@@ -112,9 +112,38 @@ if pdf_ocr.check_setup()[0]:
         check("OCR (hin+san): ॐ थेट ओळखला (11 पैकी ≥10)", _txt.count("ॐ") >= 10)
         check("OCR (hin+san): मंत्र-ओळी गाळल्या नाहीत", "खगाय" in _txt and "यजामहे" in _txt)
         check("OCR (hin+san): आकडे बदलले नाहीत", "3 बार दिन में 5 ग्राम" in _txt)
+        # संस्कृत श्लोक + हिंदी अनुवाद (स्वच्छ + धूसर पान)
+        import difflib
+        _truth = [l for l in open(os.path.join(ROOT, "tests", "data", "sanskrit_hindi.txt"), encoding="utf-8")
+                  .read().splitlines() if l]
+        n, dest = pdf_ocr.process_pdf(os.path.join(ROOT, "tests", "data", "sanskrit_hindi.pdf"), "गीता नमुना", _od,
+                                      lang="auto", jobs=2, progress=lambda m: None)
+        _txt = open(os.path.join(dest, "part_01.txt"), encoding="utf-8").read()
+        for _pg in (1, 2):
+            _part = _txt.split(f"[गीता नमुना पृ. {_pg}]")[1].split("[गीता नमुना पृ.")[0]
+            _got = [l for l in _part.splitlines() if l.strip()]
+            _sc = {"sa": [], "hi": []}
+            for _l in _truth:
+                _b = max(difflib.SequenceMatcher(None, _l, _g).ratio() for _g in _got)
+                _sc["sa" if "॥" in _l or pdf_ocr.is_sanskrit_line(_l) else "hi"].append(_b)
+            _sa, _hi = (sum(v) / len(v) * 100 for v in (_sc["sa"], _sc["hi"]))
+            print(f"   पान {_pg}: संस्कृत {_sa:.1f}%, हिंदी {_hi:.1f}%")
+            check(f"संस्कृत+हिंदी OCR पान {_pg} ({'स्वच्छ' if _pg == 1 else 'धूसर'}): संस्कृत ≥{97 if _pg == 1 else 95}%, "
+                  f"हिंदी ≥{97 if _pg == 1 else 95}%", _sa >= (97 if _pg == 1 else 95) and _hi >= (97 if _pg == 1 else 95))
+        check("संस्कृत: विसर्ग/अवग्रह/श्लोक-क्रमांक (नित्यः, शाश्वतोऽयं, ॥२०॥)",
+              "नित्यः" in _txt and "शाश्वतोऽयं" in _txt and "॥२०॥" in _txt)
         shutil.rmtree(_od, ignore_errors=True)
     else:
         print("⏭  hin+san OCR test सोडला (संस्कृत भाषा-फाइल नाही/उतरवता आली नाही)")
+
+check("संस्कृत दुरुस्ती: : -> ः, S -> ऽ, || -> ॥, सड़गो -> सङ्गो (फक्त संस्कृत ओळीत)",
+      pdf_ocr.fix_sanskrit("अजो नित्य: शाश्वतोSयं पुराणो ||२०||") == "अजो नित्यः शाश्वतोऽयं पुराणो ॥२०॥"
+      and "सङ्गोऽस्त्वकर्मणि ॥४७॥" in pdf_ocr.fix_sanskrit("मा ते सड़गो ऽस्त्वकर्मणि ॥ 47 ॥")
+      and pdf_ocr.fix_sanskrit("जैसे: राम और श्याम") == "जैसे: राम और श्याम")
+check("हिंदी अनुवादाची छोट्या शब्दांची ओळ गाळली जात नाही",
+      "मत बन" in pdf_ocr.clean("इसलिए तु कर्मफल का कारण मत बन और कर्म न करन मं भी"))
+check("श्लोक+अनुवाद गट: नवा श्लोक रिकाम्या ओळीने सुरू",
+      "कभी नहीं।\n\nन जायते" in pdf_ocr.fix_sanskrit("तेरा अधिकार कर्म में है, फल में कभी नहीं।\nन जायते म्रियते वा कदाचिन् ॥२०॥"))
 
 # ---- 2d. zip -> extract -> OCR (भाषा आपोआप) ----
 if pdf_ocr.check_setup()[0]:
