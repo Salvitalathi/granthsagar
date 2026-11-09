@@ -1,0 +1,11 @@
+name: Probe sources
+on:
+  workflow_dispatch:
+    inputs:
+      script: { description: "scripts/ मधील script", default: "probe_vyakarana.py" }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/${{ github.event.inputs.script }}
