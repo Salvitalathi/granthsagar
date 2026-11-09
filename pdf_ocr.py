@@ -378,8 +378,40 @@ def fix_om(text):
     return _HRIM_RX.sub("ह्रीं", text)
 
 
+# ---------------- संस्कृत दुरुस्ती ----------------
+# हिंदी अनुवादाच्या ओळी ओळखण्याचे शब्द — यांपैकी एकही नसेल आणि दंड/विसर्ग असतील तर ओळ संस्कृत समजा
+_HI_WORDS = set("""है हैं के में की और को से का यह वह नहीं था थे थी हो कर करने करना लिए तू तेरा तेरी भी पर कि जो किसी
+होता होती होते कैसे कहिए गया गई हुआ हुई इसलिए उसके उसकी उनके अपने रहने वाले जाता जाती आप हम मैं क्या तथा एवं अथवा
+आहे आहेत आणि नाही होते त्याचा त्याची म्हणजे केले करावे""".split())
+_DEVA_DIGITS = str.maketrans("0123456789", "०१२३४५६७८९")
+
+
+def is_sanskrit_line(line):
+    words = re.findall(r"[\u0900-\u0963\u0971-\u097F]+", line)
+    if len(words) < 2:
+        return False
+    hi = sum(w in _HI_WORDS for w in words)
+    sa = len(re.findall(r"[ः॥ऽ]|(?<=[\u0915-\u0939\u093E-\u094C]):|्(?=[\s।॥,]|$)", line))
+    return (sa >= 1 and hi == 0) or (sa >= 2 and hi <= 1)
+
+
+def fix_sanskrit(text):
+    """OCR मधील संस्कृतच्या नेहमीच्या चुका: ':' -> ः, 'S' -> ऽ, '|' '||' -> । ॥, श्लोक-क्रमांक ॥४७॥"""
+    text = re.sub(r"(?<=[\u0900-\u097F\s])(?:\|\s?\||।\s?।|॥\s?\|)", "॥", text)
+    text = re.sub(r"(?<=[\u0900-\u097F\s])\|(?=\s|$|[०-९\d])", "।", text)
+    text = re.sub(r"॥\s*([०-९\d]{1,4})\s*॥", lambda m: "॥" + m.group(1).translate(_DEVA_DIGITS) + "॥", text)
+    out = []
+    for line in text.split("\n"):
+        if is_sanskrit_line(line):
+            line = re.sub(r"(?<=[\u0915-\u0939\u093E-\u094C\u0902])\s?:(?=\s|$|[।॥,])", "ः", line)
+            line = re.sub(r"(?<=[\u0900-\u097F])\s?[Ss5](?=[\u0905-\u0939])", "ऽ", line)
+            line = re.sub(r"(?<=[ािीुूेैोौ])\s+ऽ", "ऽ", line)
+        out.append(line)
+    return "\n".join(out)
+
+
 def clean(text):
-    text = fix_om(text)                                    # आधी ॐ — मग गाळणी (मंत्र ओळी वाचतात)
+    text = fix_sanskrit(fix_om(text))                      # आधी ॐ/संस्कृत — मग गाळणी (मंत्र ओळी वाचतात)
     out = []
     for line in text.splitlines():
         line = line.strip()
@@ -399,8 +431,9 @@ def clean(text):
                 continue                                     # 'आरोग्य-अड्ड आरोग्य-अड्ड …' सजावट
             if words:
                 short = sum(len(w) <= 2 for w in words) / len(words)
-                if len(words) >= 6 and short > 0.6:        # 'ली नली लक कि ल्‍' सारखी सजावट
-                    continue
+                common = sum(w in _HI_WORDS or w in ("न", "च", "वा", "तु", "हि", "मत") for w in words)
+                if len(words) >= 6 and short > 0.6 and common < 2:   # 'ली नली लक कि ल्‍' सारखी सजावट
+                    continue                                          # (हिंदीत 'का मत बन और' असे छोटे शब्द खरे)
             elif len(re.findall(r"[A-Za-z]{2,}", line)) >= 3:
                 pass                                         # इंग्रजी मजकूर (अनुवाद/टीपा) — ठेवा
             elif not re.search(r"\d", line) or len(line) < 3:

@@ -1,0 +1,22 @@
+name: Sanskrit OCR benchmark
+on: workflow_dispatch
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-hin tesseract-ocr-san >/dev/null
+          pip install -q pypdfium2 pillow numpy
+          tesseract --version | head -1
+          for v in tessdata_best tessdata_fast; do
+            mkdir -p /tmp/$v
+            for l in hin san; do curl -sSL -o /tmp/$v/$l.traineddata https://github.com/tesseract-ocr/$v/raw/main/$l.traineddata; done
+            ls -la /tmp/$v
+          done
+      - run: |
+          { echo "| data | lang | psm | पान | संस्कृत % (कच्चा → दुरुस्त) | हिंदी % |"; echo "|---|---|---|---|---|---|";
+            python tests/sanskrit_bench.py - hin hin+san san+hin san dual;
+            for v in tessdata_best tessdata_fast; do python tests/sanskrit_bench.py /tmp/$v hin hin+san san+hin san dual; done; } | tee -a "$GITHUB_STEP_SUMMARY"
