@@ -16,6 +16,7 @@ PDF ग्रंथ -> स्वच्छ मजकूर (ग्रंथसा
        pip install pypdfium2 pillow   (Poppler असेल तर तेही चालते)
 हिंदी/मराठी भाषेची फाइल नसेल तर ती एकदाच इंटरनेटवरून "tessdata" folder मध्ये उतरवली जाते.
 """
+import page_layout
 import argparse, contextlib, glob, hashlib, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.request, zipfile
 from concurrent.futures import ThreadPoolExecutor
 
@@ -48,7 +49,7 @@ def _work_dir(name):
     """एका ग्रंथाचा OCR cache — ASCII नाव (v2: जुने रिकाम्या पानांचे cache वापरू नयेत)"""
     key = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")[:30]
     key = (key + "_" if key else "") + hashlib.sha1(name.encode("utf-8")).hexdigest()[:12]
-    return _ascii_dir("granthsagar_ocr_v2", key)
+    return _ascii_dir("granthsagar_ocr_v3", key)      # v3: तक्ते/चित्रे जपणारी रचना
 TESSDATA_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/{}.traineddata"
 DEVA = re.compile(r"[\u0900-\u097F]")
 WORD = re.compile(r"[\u0900-\u097F]+")
@@ -257,6 +258,44 @@ def render_page(pdf, page, png, dpi):
     return png if os.path.exists(png) else None
 
 
+_COMMON = (" है", " के ", " में ", " और ", " आहे", " आणि ", " की ", " च ", " तु ", " इति", " वा ", "म् ", "ः ")
+_EN_COMMON = re.compile(r"\b(?:the|of|and|to|in|is|that|with|for|as)\b", re.I)
+
+
+def page_text_ok(t):
+    """या एका पानाचा PDF-मजकूर थेट वापरण्यासारखा आहे का (OCR नको)?
+    scan केलेले/रिकामे पान, किंवा जुना font (Kruti Dev/Chanakya — आतून बिघडलेली अक्षरे) -> नाही"""
+    deva = len(DEVA.findall(t))
+    if deva >= 40:
+        common = sum(t.count(w) for w in _COMMON)
+        return common / deva > 0.01 and "आयोग्म" not in t
+    latin = re.findall(r"[A-Za-z]+", t)
+    return sum(map(len, latin)) >= 200 and len(_EN_COMMON.findall(t)) / max(len(latin), 1) > 0.04
+
+
+def digital_figures(pdf, page, fig_dir, dpi=200):
+    """मजकूर असलेल्या (digital) पानावरील चित्रे/आकृत्या -> fig_dir मध्ये PNG; परत: खुणेच्या ओळी"""
+    if renderer() != "pdfium":
+        return []
+    import numpy as np
+    with _pdfium_doc(pdf) as doc:
+        pg = doc[page - 1]
+        h_pt = pg.get_height()
+        img = pg.render(scale=dpi / 72, grayscale=True).to_pil()
+        tp = pg.get_textpage()
+        boxes = []
+        for i in range(tp.count_rects()):
+            l, b, r, t = tp.get_rect(i)
+            boxes.append((int(l * dpi / 72), int((h_pt - t) * dpi / 72), int((r - l) * dpi / 72) + 1,
+                          int((t - b) * dpi / 72) + 1))
+    lines = []
+    for k, f in enumerate(page_layout.find_figures(np.asarray(img), boxes), 1):
+        name = f"p{page:05d}_{k}.png"
+        page_layout.save_crop(img, f, os.path.join(fig_dir, name))
+        lines.append(page_layout.figure_line(k, "images/" + name, []))
+    return lines
+
+
 def text_layer_ok(pdf, n):
     """PDF चा मजकूर वापरण्यासारखा आहे का? (बिघडलेले Mangal / Chanakya / scan नको)"""
     t = "".join(page_text(pdf, p) for p in range(1, min(n, 15) + 1))
@@ -344,6 +383,9 @@ def clean(text):
     out = []
     for line in text.splitlines():
         line = line.strip()
+        if line.startswith(page_layout.FIG_MARK):          # चित्राची खूण — जशीच्या तशी
+            out.append(line)
+            continue
         if not line:
             if out and out[-1]:
                 out.append("")
@@ -359,6 +401,8 @@ def clean(text):
                 short = sum(len(w) <= 2 for w in words) / len(words)
                 if len(words) >= 6 and short > 0.6:        # 'ली नली लक कि ल्‍' सारखी सजावट
                     continue
+            elif len(re.findall(r"[A-Za-z]{2,}", line)) >= 3:
+                pass                                         # इंग्रजी मजकूर (अनुवाद/टीपा) — ठेवा
             elif not re.search(r"\d", line) or len(line) < 3:
                 continue
         out.append(line.replace("\u200d", "").replace("\u200c", ""))
@@ -470,12 +514,34 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
     if n == 0:
         raise PdfFileError("ही PDF उघडता आली नाही")
 
-    if not force_ocr and text_layer_ok(pdf, n):
-        progress(f"📄 {name}: PDF मध्ये चांगला मजकूर आहे — OCR ची गरज नाही")
+    fig_dir = os.path.join(work, "figs")
+    os.makedirs(fig_dir, exist_ok=True)
+
+    def save(p, text):
+        txt = os.path.join(work, f"p{p:05d}.txt")
+        with open(txt + ".tmp", "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(txt + ".tmp", txt)
+
+    # 1. प्रत्येक पान वेगळे: PDF चा स्वतःचा मजकूर चांगला असेल तर थेट (OCR नको)
+    direct = 0
+    if not force_ocr:
         for p in range(1, n + 1):
-            with open(os.path.join(work, f"p{p:05d}.txt"), "w", encoding="utf-8") as f:
-                f.write(clean(page_text(pdf, p)))
-    else:
+            if os.path.exists(os.path.join(work, f"p{p:05d}.txt")):
+                continue
+            t = page_text(pdf, p)
+            if page_text_ok(t):
+                try:
+                    figs = digital_figures(pdf, p, fig_dir)
+                except Exception:
+                    figs = []
+                save(p, clean(t) + ("\n\n" + "\n".join(figs) if figs else ""))
+                direct += 1
+    todo = [p for p in range(1, n + 1) if not os.path.exists(os.path.join(work, f"p{p:05d}.txt"))]
+    if direct:
+        progress(f"📄 {name}: {direct} पाने PDF मधून थेट वाचली (OCR ची गरज नाही)"
+                 + (f"; {len(todo)} पाने scan/जुन्या font ची — त्यांचा OCR" if todo else ""))
+    if todo:
         ok, tess = check_setup(lang)
         if not ok:
             raise OCRSetupError(tess)
@@ -490,9 +556,17 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
         progress(f"🔤 OCR भाषा: {lang}")
         env = dict(os.environ, OMP_THREAD_LIMIT="1")
 
+        def tsv(png, psm):
+            cmd = [tess, png, "stdout", "-l", lang, "--psm", psm, "-c", "tessedit_create_tsv=1"]
+            if tessdata:
+                cmd += ["--tessdata-dir", tessdata]
+            r = run(cmd, env=env)
+            if r.returncode != 0:            # Tesseract अपयशी — रिकामे पान save करू नका
+                raise OCRSetupError(f"Tesseract चालला नाही: {(r.stderr or '').strip()[:300]}")
+            return page_layout.parse_tsv(r.stdout)
+
         def one(p):
-            txt = os.path.join(work, f"p{p:05d}.txt")
-            if os.path.exists(txt):
+            if os.path.exists(os.path.join(work, f"p{p:05d}.txt")):
                 return
             png = None
             for attempt in range(3):                   # पान कधी अपयशी झाले तर पुन्हा प्रयत्न
@@ -505,29 +579,31 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
                     time.sleep(1)
             text = ""
             if png:
-                cmd = [tess, png, "stdout", "-l", lang, "--psm", "3"]
-                if tessdata:
-                    cmd += ["--tessdata-dir", tessdata]
-                r = run(cmd, env=env)
+                words = tsv(png, "3")
+                table = page_layout.is_table_page(words)
+                if table:                              # अनुक्रमणिका/तक्ता: एकसंध ओळी (psm 6) जास्त अचूक
+                    words = tsv(png, "6")
+                img = None
+                try:
+                    from PIL import Image
+                    img = Image.open(png); img.load()
+                except Exception:
+                    pass
+                text, _ = page_layout.ocr_page_layout(
+                    words, img, fig_dir, p, find=img is not None, table=table,
+                    label_fn=lambda f: [w["text"] for w in tsv(f, "11")])
                 os.remove(png)
-                if r.returncode != 0:            # Tesseract अपयशी — रिकामे पान save करू नका
-                    raise OCRSetupError(f"Tesseract चालला नाही: {(r.stderr or '').strip()[:300]}")
-                text = r.stdout
-            with open(txt + ".tmp", "w", encoding="utf-8") as f:
-                f.write(clean(text))
-            os.replace(txt + ".tmp", txt)
+            save(p, clean(text))
 
-        done = len(glob.glob(os.path.join(work, "p*.txt")))
-        progress(f"🔍 {name}: {n} पाने OCR ({jobs} समांतर){f', आधी झालेली {done}' if done else ''}")
-        t0, new = time.time(), 0
+        done = n - len(todo)
+        progress(f"🔍 {name}: {len(todo)} पाने OCR ({jobs} समांतर){f', आधी झालेली {done}' if done else ''}")
+        t0 = time.time()
         with ThreadPoolExecutor(jobs) as ex:
-            for i, _ in enumerate(ex.map(one, range(1, n + 1)), 1):
-                if i > done:
-                    new += 1
-                if i % 5 == 0 or i == n:
-                    rate = new / max(time.time() - t0, 1e-6)
-                    left = (n - i) / rate / 60 if rate > 0 else 0
-                    progress(f"🔍 {name}: {i}/{n} पाने" + (f", उरलेला वेळ ~{left:.0f} मिनिटे" if i < n else ""))
+            for i, _ in enumerate(ex.map(one, todo), 1):
+                if i % 5 == 0 or i == len(todo):
+                    rate = i / max(time.time() - t0, 1e-6)
+                    left = (len(todo) - i) / rate / 60 if rate > 0 else 0
+                    progress(f"🔍 {name}: {done + i}/{n} पाने" + (f", उरलेला वेळ ~{left:.0f} मिनिटे" if i < len(todo) else ""))
 
     # सुरक्षा: एकाही पानावर मजकूर नाही = काहीतरी चुकले (Tesseract/भाषा) — 'तयार' म्हणू नका
     pages_txt = sorted(f for f in os.listdir(work) if re.match(r"p\d{5}\.txt$", f))
@@ -544,11 +620,18 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
     os.makedirs(dest, exist_ok=True)
     for old in glob.glob(os.path.join(dest, "part_*.txt")):
         os.remove(old)
+    img_dest = os.path.join(dest, "images")              # चित्रे जशीच्या तशी
+    shutil.rmtree(img_dest, ignore_errors=True)
+    figs = sorted(os.listdir(fig_dir)) if os.path.isdir(fig_dir) else []
+    if figs:
+        os.makedirs(img_dest, exist_ok=True)
+        for f in figs:
+            shutil.copy(os.path.join(fig_dir, f), os.path.join(img_dest, f))
     part, size, k, total = [], 0, 1, 0
     pages = sorted(f for f in os.listdir(work) if re.match(r"p\d{5}\.txt$", f))
     for i, fn in enumerate(pages):
         t = clean(open(os.path.join(work, fn), encoding="utf-8").read())
-        if len(DEVA.findall(t)) >= 40:
+        if len(DEVA.findall(t)) >= 40 or page_layout.FIG_MARK in t or len(re.findall(r"[A-Za-z]", t)) >= 200:
             block = f"[{name} पृ. {int(fn[1:6])}]\n{t}"
             part.append(block); size += len(block); total += 1
         if part and (size > 150_000 or i == len(pages) - 1):
@@ -556,7 +639,7 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
                 f.write("\n\n".join(part) + "\n")
             part, size, k = [], 0, k + 1
     shutil.rmtree(work, ignore_errors=True)
-    progress(f"✅ {name}: {total} पाने → {dest}")
+    progress(f"✅ {name}: {total} पाने" + (f", {len(figs)} चित्रे" if figs else "") + f" → {dest}")
     return total, dest
 
 

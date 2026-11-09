@@ -46,7 +46,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.4"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.5"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -522,6 +522,148 @@ def start_indexing():
 TEXT_EXT = (".txt", ".md", ".csv", ".docx")
 
 
+# ===================== चित्रांचे वर्णन (gemma3 ची दृष्टी) =====================
+# OCR ने ग्रंथातील चित्रे (कुंडली, नक्षत्र-चक्र, तक्ते) granth/pdf/<ग्रंथ>/images/ मध्ये जशीच्या तशी ठेवली.
+# इथे दृष्टी असलेले मॉडेल (gemma3:4b/12b) प्रत्येक चित्राचे मराठी वर्णन लिहिते -> 'चित्र_वर्णन_XX.txt'
+# (शोधता येते). gemma3:1b ला दृष्टी नाही — तेव्हा चित्रे फक्त उत्तरासोबत दाखवली जातात.
+VISION_MODEL = os.environ.get("GS_VISION_MODEL", "") or ("" if CHAT_MODEL.endswith(":1b") else CHAT_MODEL)
+FIG_STATUS = {"running": False, "msg": ""}
+ACTIVE_ASKS = [0]                 # प्रश्नाचे उत्तर चालू असताना चित्र-वर्णन थांबवा (CPU मोकळा)
+_VISION = {}
+_FIG_SIG = [None]
+FIG_RX = re.compile(r"🖼 चित्र (\d+): (images/p(\d{5})_\d+\.png)(?: — चित्रातील अक्षरे: (.*))?")
+DESC_PER_FILE = 20
+FIG_PROMPT = ("हे चित्र '{book}' या ग्रंथाच्या पान {page} वरील आहे{labels}. चित्रात नेमके काय आहे ते सोप्या मराठीत लिही:\n"
+              "- कुंडली/चक्र असेल तर: कोणत्या पद्धतीची (उत्तर/दक्षिण भारतीय, नक्षत्र-चक्र), आणि प्रत्येक घरात/भागात "
+              "दिसणारे अंक व अक्षरे (उदा. सू, चं, मं) घराप्रमाणे;\n- तक्ता असेल तर: ओळीनुसार मजकूर;\n"
+              "- आकृती/फोटो असेल तर: त्याचे थोडक्यात वर्णन.\n"
+              "जे स्पष्ट वाचता येत नाही ते अंदाजाने लिहू नकोस — 'अस्पष्ट' असे लिही. 120 शब्दांपेक्षा जास्त नको.")
+
+
+def vision_ok():
+    if not VISION_MODEL:
+        return False
+    if VISION_MODEL not in _VISION:
+        try:
+            info = ollama_post("/api/show", {"model": VISION_MODEL}, timeout=30)
+        except Exception:
+            return False                                   # Ollama बंद — नंतर पुन्हा तपासू
+        _VISION[VISION_MODEL] = "vision" in (info.get("capabilities") or [])
+    return _VISION[VISION_MODEL]
+
+
+def figure_books():
+    """चित्रे असलेले ग्रंथ-folders: [(folder, ग्रंथाचे नाव, [(पान, क्र., png-rel, labels)])]"""
+    out = []
+    for root, dirs, files in os.walk(DOCS_DIR):
+        if "images" not in dirs:
+            continue
+        figs = []
+        for fn in sorted(f for f in files if f.startswith("part_") and f.endswith(".txt")):
+            try:
+                text = open(os.path.join(root, fn), encoding="utf-8").read()
+            except OSError:
+                continue
+            book = None
+            for line in text.splitlines():
+                h = re.match(r"^\[(.+?) पृ\. (\d+)\]", line)
+                if h:
+                    book = h.group(1)
+                m = FIG_RX.search(line)
+                if m:
+                    figs.append((int(m.group(3)), int(m.group(1)), m.group(2), m.group(4) or "", book))
+        if figs:
+            out.append((root, figs))
+    return out
+
+
+def write_fig_descs(root, figs):
+    """*.png.desc -> चित्र_वर्णन_XX.txt (२० चित्रे एका फाइलमध्ये; फक्त शेवटची फाइल बदलते)"""
+    rows = []
+    for page, k, rel, labels, book in figs:
+        d = os.path.join(root, rel + ".desc")
+        if os.path.exists(d):
+            rows.append(f"[{book or os.path.basename(root)} पृ. {page} — चित्र {k}]\n"
+                        f"🖼 {rel}\n(चित्राचे AI-वर्णन — चूक असू शकते, मूळ चित्र पाहा)\n"
+                        + open(d, encoding="utf-8").read().strip())
+    for i in range(0, len(rows), DESC_PER_FILE):
+        path = os.path.join(root, f"चित्र_वर्णन_{i // DESC_PER_FILE + 1:02d}.txt")
+        body = "\n\n".join(rows[i:i + DESC_PER_FILE]) + "\n"
+        old = open(path, encoding="utf-8").read() if os.path.exists(path) else None
+        if old != body:
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                f.write(body)
+            os.replace(path + ".tmp", path)
+
+
+def describe_figure(png, book, page, labels):
+    import base64
+    with open(png, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    lab = f" (OCR ला दिसलेली अक्षरे: {labels})" if labels else ""
+    res = ollama_post("/api/chat", {
+        "model": VISION_MODEL, "stream": False,
+        "messages": [{"role": "user", "content": FIG_PROMPT.format(book=book, page=page, labels=lab), "images": [b64]}],
+        "options": {"temperature": 0.1, "num_predict": 350, "num_ctx": 4096}}, timeout=900)
+    return (res.get("message") or {}).get("content", "").strip()
+
+
+def start_figures():
+    """पार्श्वभूमीत: वर्णन नसलेल्या चित्रांचे वर्णन (एकावेळी एक; उत्तर देताना थांबते)"""
+    if FIG_STATUS["running"] or OCR_STATUS["running"] or not vision_ok():
+        return False
+    sig = []                                        # काही बदलले नसेल तर part फाइल्स पुन्हा वाचू नका
+    for root, dirs, files in os.walk(DOCS_DIR):
+        if os.path.basename(root) == "images":
+            sig.append((root, len(files), os.path.getmtime(root)))
+    if sig == _FIG_SIG[0]:
+        return False
+    books = figure_books()
+    todo = [(root, f) for root, figs in books for f in figs if not os.path.exists(os.path.join(root, f[2] + ".desc"))]
+    if not todo:
+        _FIG_SIG[0] = sig
+        return False
+
+    def work():
+        FIG_STATUS.update(running=True)
+        try:
+            for i, (root, (page, k, rel, labels, book)) in enumerate(todo, 1):
+                while ACTIVE_ASKS[0] > 0 or OCR_STATUS["running"]:
+                    time.sleep(2)
+                FIG_STATUS["msg"] = f"🖼 चित्रांचे वर्णन: {i}/{len(todo)} ({book or ''} पृ. {page})"
+                png = os.path.join(root, rel)
+                try:
+                    desc = describe_figure(png, book or os.path.basename(root), page, labels)
+                except Exception as e:
+                    print(f"⚠️ चित्र {rel}: वर्णन जमले नाही ({e})", flush=True)
+                    continue
+                if desc:
+                    with open(png + ".desc", "w", encoding="utf-8") as f:
+                        f.write(desc)
+                if i % 5 == 0 or i == len(todo):
+                    for r, figs in books:
+                        write_fig_descs(r, figs)
+                    start_indexing()
+            FIG_STATUS["msg"] = f"✅ {len(todo)} चित्रांचे वर्णन तयार"
+        finally:
+            FIG_STATUS["running"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
+def answer_images(hits, limit=4):
+    """उत्तरासाठी वापरलेल्या तुकड्यांतील चित्रे -> granth/ पासूनचे relative paths"""
+    out = []
+    for _, name, text in hits:
+        base = os.path.dirname(agents.norm(name))
+        for rel in re.findall(r"images/p\d{5}_\d+\.png", text):
+            p = f"{base}/{rel}" if base else rel
+            if p not in out and os.path.exists(os.path.join(DOCS_DIR, p)):
+                out.append(p)
+    return out[:limit]
+
+
 ZIP_LOCK = threading.Lock()
 
 
@@ -740,6 +882,7 @@ def start_ocr():
                 move_aside(pdf, "done")
                 OCR_STATUS["done"].append(name)
                 start_indexing()          # तयार मजकूर लगेच वाचायला घ्या
+            threading.Timer(5, start_figures).start()      # OCR संपल्यावर चित्रांचे वर्णन
             if failed:
                 OCR_STATUS.update(error=f"{len(failed)} PDF उघडल्या नाहीत: {', '.join(failed)} "
                                         f"(pdf_inbox\\failed मध्ये कारणासह ठेवल्या)",
@@ -797,6 +940,8 @@ def watch_folders():
                     and (pending_zips() or pending_pdfs()):
                 print("📥 नवीन PDF/zip सापडली — काम सुरू", flush=True)
                 safe_start_ocr()
+            elif not OCR_STATUS["running"] and not FIG_STATUS["running"]:
+                start_figures()
         except Exception:
             pass
 
@@ -849,6 +994,7 @@ form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
 #kPanel input,#kPanel select{font:inherit;padding:6px;border:1px solid #bbb;border-radius:6px}
 #kPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
 .kchart{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.kchart svg{max-width:100%;height:auto}
+.figs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.figs img{max-height:180px;max-width:240px;border:1px solid #ccc;border-radius:6px;background:#fff}
 .chip{display:inline-block;background:#fff;border:1px solid #c9bda3;border-radius:14px;padding:3px 10px;margin:3px;cursor:pointer;font-size:13px}
 textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
 </style></head><body>
@@ -898,27 +1044,29 @@ let warned=false,ocrErr='';
 async function status(){try{const r=await (await fetch('/status')).json();
  st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`:'· Ollama चालू नाही!';
  const pg=document.getElementById('prog');
- if(r.ocr||r.indexing){pg.hidden=false;
-  pg.innerHTML=(r.ocr?`📄 <b>PDF मजकूर बनत आहे</b>: ${r.ocr_msg}<br>`:'')+(r.indexing?`📖 <b>ग्रंथ वाचणे</b>: ${r.progress}<br>`:'')+
+ if(r.ocr||r.indexing||r.fig){pg.hidden=false;
+  pg.innerHTML=(r.ocr?`📄 <b>PDF मजकूर बनत आहे</b>: ${r.ocr_msg}<br>`:'')+(r.indexing?`📖 <b>ग्रंथ वाचणे</b>: ${r.progress}<br>`:'')+(r.fig?`${r.fig_msg}<br>`:'')+
    '<small>हे पार्श्वभूमीत चालू आहे — तोपर्यंत आधी वाचलेल्या ग्रंथांवर प्रश्न विचारू शकता. ही खिडकी बंद केली तरी काम चालू राहते; काळी खिडकी (command) बंद करू नका.</small>'}
  else pg.hidden=true;
  if(r.warn&&!warned){add('sys',r.warn);warned=true}
  if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;add('sys','⚠️ '+r.ocr_error);pmsg.textContent='⚠️ '+r.ocr_error}
  if(!pdfPanel.hidden&&r.ocr)pmsg.textContent=r.ocr_msg;
- setTimeout(status,(r.indexing||r.ocr)?4000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
+ setTimeout(status,(r.indexing||r.ocr||r.fig)?4000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
 async function openInbox(){try{const r=await (await fetch('/open-inbox',{method:'POST'})).json();add('sys',r.msg)}catch(e){add('sys','⚠️ '+e)}}
 async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
- const b=add('bot','…');let ans='',srcs=[];
+ const b=add('bot','…');let ans='',srcs=[],imgs=[];
  try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist.slice(-6),agent:agent,birth:(AG[agent]&&AG[agent].kundali)?birth:null})});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
-    if(m.type==='sources')srcs=m.sources;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
+    if(m.type==='sources')srcs=m.sources;else if(m.type==='images')imgs=m.images;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
     else if(m.type==='alert'){const a=document.createElement('div');a.className='alert';a.textContent=m.msg;chat.insertBefore(a,b)}
     else if(m.type==='error'){ans+='\n⚠️ '+m.msg;b.textContent=ans}}}
  }catch(e){b.textContent='⚠️ '+e}
+ if(imgs.length){const g=document.createElement('div');g.className='figs';imgs.forEach(p=>{const a=document.createElement('a');a.href='/img?p='+encodeURIComponent(p);a.target='_blank';
+  const im=document.createElement('img');im.src=a.href;im.title=p;a.appendChild(im);g.appendChild(a)});b.appendChild(g)}
  if(srcs.length){const s=document.createElement('div');s.className='src';s.textContent='📄 संदर्भ: '+srcs.join(', ');b.appendChild(s)}
  hist.push({role:'user',content:t},{role:'assistant',content:ans});busy=false;q.focus()}
 let agent=localStorage.getItem('gs_agent')||'sarva',AG={},birth=null;
@@ -992,7 +1140,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "model": CHAT_MODEL, "files": len(INDEX["files"]), "chunks": len(VECS),
                         "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
                         "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
-                        "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION})
+                        "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION,
+                        "fig": FIG_STATUS["running"], "fig_msg": FIG_STATUS["msg"]})
+        elif self.path.startswith("/img?"):
+            from urllib.parse import urlparse, parse_qs
+            rel = parse_qs(urlparse(self.path).query).get("p", [""])[0]
+            full = os.path.realpath(os.path.join(DOCS_DIR, rel))
+            root = os.path.realpath(DOCS_DIR)
+            if not (full.startswith(root + os.sep) and full.lower().endswith(".png") and os.path.isfile(full)):
+                return self.send_error(404)
+            with open(full, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "max-age=3600")
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/agents":
             import jyotish
             self._json({"agents": agents.public_list(), "cities": list(jyotish.CITIES)})
@@ -1062,9 +1226,13 @@ class Handler(BaseHTTPRequestHandler):
                     chart = kundali_from(data["birth"])
                 except Exception as e:
                     self._send({"type": "error", "msg": f"कुंडली बनवता आली नाही: {e}"})
-            for ev in answer_events((data.get("q") or "").strip(), data.get("history", []),
-                                    data.get("agent"), chart):
-                self._send(ev)
+            ACTIVE_ASKS[0] += 1
+            try:
+                for ev in answer_events((data.get("q") or "").strip(), data.get("history", []),
+                                        data.get("agent"), chart):
+                    self._send(ev)
+            finally:
+                ACTIVE_ASKS[0] -= 1
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -1086,6 +1254,9 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
         hits = []
         yield {"type": "error", "msg": f"फाइल्स शोधता आल्या नाहीत ({e}) — सामान्य उत्तर देत आहे."}
     yield {"type": "sources", "sources": list(dict.fromkeys(name for _, name, _ in hits))}
+    imgs = answer_images(hits)
+    if imgs:
+        yield {"type": "images", "images": imgs}
     if MODE == "granth" and red_flag(question):
         # आपत्कालीन लक्षणे: AI कडून उपाय नाही — ठरलेला सुरक्षित संदेश
         yield {"type": "alert", "msg": EMERGENCY_MSG}
@@ -1103,6 +1274,9 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
         import jyotish
         user_msg += "जन्मकुंडली (गणिताने काढलेली — हीच ग्रह-स्थिती वापर):\n" + jyotish.summary_text(kundali) + "\n\n---\n"
     user_msg = (user_msg + f"प्रश्न: {question}") if user_msg else question
+    if "🖼" in user_msg:
+        user_msg += ("\n\n(संदर्भातील '🖼 चित्र' म्हणजे ग्रंथातील चित्र/कुंडली/तक्ता — ते उत्तराखाली दाखवले जाईल. "
+                     "चित्राचा उल्लेख 'पृ. N वरील चित्र पाहा' असा कर; AI-वर्णन चुकीचे असू शकते असे सांग.)")
     if MODE == "granth":
         user_msg += MARATHI_REMINDER
     prompt = agents.prompt(agent, GRANTH_PROMPT) if MODE == "granth" else SYSTEM_PROMPT
@@ -1253,6 +1427,7 @@ def main():
         recover_empty_done()
         safe_start_ocr()
         start_indexing()
+        threading.Timer(3, start_figures).start()     # चित्रांचे राहिलेले वर्णन
     if pdf_ocr:
         threading.Thread(target=watch_folders, daemon=True).start()
     url = f"http://127.0.0.1:{PORT}"

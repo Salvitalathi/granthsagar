@@ -16,6 +16,14 @@ class H(BaseHTTPRequestHandler):
         if self.path=="/api/embed":
             b=json.dumps({"embeddings":[vec(t) for t in d["input"]]}).encode()
             self.send_response(200);self.end_headers();self.wfile.write(b)
+        elif self.path=="/api/show":
+            b=json.dumps({"capabilities":["completion","vision"]}).encode()
+            self.send_response(200);self.end_headers();self.wfile.write(b)
+        elif d.get("stream") is False:
+            m=d["messages"][-1]
+            reply="उत्तर भारतीय कुंडली; पहिल्या घरात सू चं" if m.get("images") else "ठीक"
+            b=json.dumps({"message":{"content":reply},"done":True},ensure_ascii=False).encode()
+            self.send_response(200);self.end_headers();self.wfile.write(b)
         else:
             last=d["messages"][-1]["content"]
             reply="संदर्भ मिळाला: "+last[:60].replace("\n"," ") if last.startswith("संदर्भ") else "सामान्य उत्तर"

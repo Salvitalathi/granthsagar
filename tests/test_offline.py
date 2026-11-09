@@ -1,5 +1,5 @@
 """Ollama शिवाय चालणाऱ्या tests (बनावट Ollama server वापरून).  चालवा: python tests/test_offline.py"""
-import os, sys, json, time, shutil, zipfile, tempfile, subprocess, urllib.request
+import os, re, sys, json, time, shutil, zipfile, tempfile, subprocess, urllib.request, urllib.parse, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -218,6 +218,62 @@ if pdf_ocr.check_setup()[0]:
           and os.path.exists(os.path.join(gs.PDF_INBOX, "वायु पुराण.pdf")))
     shutil.rmtree(_wd, ignore_errors=True)
 
+# ---- 2e2. पानाची रचना: अनुक्रमणिका आणि चित्रे ----
+import page_layout as PL
+def _w(t, x, y, b, l, conf=90):
+    return {"b": b, "p": 1, "l": l, "x": x, "y": y, "w": 18 * len(t), "h": 30, "conf": conf, "text": t}
+# Tesseract ने डावा स्तंभ (विषय) आणि उजवा स्तंभ (पान) वेगवेगळ्या block मध्ये वाचला
+_idx = [_w("अनुक्रमणिका", 500, 50, 1, 1)]
+for i, (t, n) in enumerate([("प्रथम अध्याय", 1), ("द्वितीय अध्याय", 9), ("तृतीय अध्याय", 17), ("चतुर्थ अध्याय", 28)]):
+    _idx += [_w(t.split()[0], 100, 150 + 60 * i, 2, i), _w(t.split()[1], 260, 150 + 60 * i, 2, i),
+             _w("..........", 450, 150 + 60 * i, 2, i)]
+for i, n in enumerate(["]", "9", "[7", "28"]):
+    _idx.append(_w(n, 1000, 152 + 60 * i, 3, i))
+_lines = [t for _, t in PL.layout_lines(_idx)]
+check("अनुक्रमणिका: विषय आणि पान क्रमांक एकाच ओळीत", _lines[1:] == ["प्रथम अध्याय … 1", "द्वितीय अध्याय … 9",
+                                                                      "तृतीय अध्याय … 17", "चतुर्थ अध्याय … 28"])
+_para = [_w("साधे", 100, 100, 1, 1), _w("वाक्य", 200, 100, 1, 1), _w("।", 300, 100, 1, 1)]
+check("साध्या पानावर '।' व क्रम तसाच", [t for _, t in PL.layout_lines(_para)] == ["साधे वाक्य ।"])
+check("'७ ७ ७' ठिपके -> …", PL.layout_lines([_w("अनुक्रमणिका", 0, 0, 1, 1)] + [_w(t, 100 + 40 * k, 100, 1, 2) for k, t in
+      enumerate(["योग", "विचार", "७", "७", "७", "#+", "७", "41"])])[1][1] == "योग विचार … 41")
+try:
+    import numpy as _np
+    _g = _np.full((1400, 1000), 255, _np.uint8)
+    _g[100:130, 100:900] = 0                                     # मजकुराची ओळ (text box)
+    _g[400:404, 300:700] = 0; _g[796:800, 300:700] = 0           # कुंडलीचा चौकोन + कर्ण
+    _g[400:800, 300:304] = 0; _g[400:800, 696:700] = 0
+    for _k in range(400):
+        _g[400 + _k, 300 + _k] = 0; _g[400 + _k, 699 - _k] = 0
+    _figs = PL.find_figures(_g, [(100, 100, 800, 30)])
+    check("चित्र शोध: कुंडली सापडली, मजकूर नाही", len(_figs) == 1 and _figs[0][0] <= 310 and _figs[0][2] >= 690
+          and _figs[0][1] >= 300)
+    _g2 = _np.full((1400, 1000), 255, _np.uint8); _g2[20:24, 20:980] = 0; _g2[1376:1380, 20:980] = 0
+    _g2[20:1380, 20:24] = 0; _g2[20:1380, 976:980] = 0
+    check("चित्र शोध: पानाभोवतीची चौकट चित्र नाही", PL.find_figures(_g2, []) == [])
+except ImportError:
+    print("⏭  numpy नाही — चित्र-शोध test सोडला")
+check("मजकूर-PDF पान थेट (OCR नको), scan/जुना font नाही",
+      pdf_ocr.page_text_ok("हे पान मराठीत आहे आणि यात खरा मजकूर आहे. " * 5)
+      and not pdf_ocr.page_text_ok("") and not pdf_ocr.page_text_ok("vk;qosZn ds vuqlkj " * 20))
+
+if pdf_ocr.check_setup()[0]:
+    _ld = tempfile.mkdtemp()
+    _n, _dest = pdf_ocr.process_pdf(os.path.join(ROOT, "tests", "data", "layout_jyotish.pdf"), "नक्षत्र चाचणी", _ld,
+                                    lang="hin", jobs=2, progress=lambda m: None)
+    _t = open(os.path.join(_dest, "part_01.txt"), encoding="utf-8").read()
+    _rows = re.findall(r"^.*अध्याय.*… [\d]+$", _t, flags=re.M)
+    print("   अनुक्रमणिका:", _rows)
+    check("OCR: अनुक्रमणिकेच्या ओळी पान-क्रमांकासह (≥6/8)", len(_rows) >= 6)
+    check("OCR: कुंडली-चित्र जसेच्या तसे PNG + मजकुरात खूण",
+          "🖼 चित्र 1: images/p00002_1.png" in _t and os.path.exists(os.path.join(_dest, "images", "p00002_1.png")))
+    check("OCR: चित्राच्या आधी-नंतरचा मजकूर क्रमाने", _t.find("दाखवली आहे") < _t.find("🖼") < _t.find("वरील कुंडलीत"))
+    _n, _dest = pdf_ocr.process_pdf(os.path.join(ROOT, "tests", "data", "mixed_digital_scan.pdf"), "मिश्र चाचणी", _ld,
+                                    lang="hin", jobs=2, progress=lambda m: None)
+    _t = open(os.path.join(_dest, "part_01.txt"), encoding="utf-8").read()
+    check("मिश्र PDF: मजकूर-पान थेट (इंग्रजी जपले) + त्यातील आकृती, scan पान OCR",
+          "The twelve houses of the horoscope" in _t and "images/p00001_1.png" in _t and "जन्मकुंडलीत" in _t)
+    shutil.rmtree(_ld, ignore_errors=True)
+
 # ---- 2f. विषयवार agents ----
 import agents
 _j, _s = agents.get("jyotish"), agents.get("sarva")
@@ -264,6 +320,11 @@ with zipfile.ZipFile(os.path.join(docs, "notes.docx"), "w") as z:
     z.writestr("word/document.xml", '<w:document xmlns:w="x"><w:body><w:p><w:r>'
                '<w:t>चरक संहितेनुसार अपचनात हलका आहार घ्यावा.</w:t></w:r></w:p></w:body></w:document>')
 
+_bk = os.path.join(docs, "pdf", "ज्योतिष", "नक्षत्र_ग्रंथ")
+os.makedirs(os.path.join(_bk, "images"))
+shutil.copy(os.path.join(ROOT, "tests", "data", "sample_scan.pdf"), os.path.join(_bk, "images", "p00002_1.png"))
+with open(os.path.join(_bk, "part_01.txt"), "w", encoding="utf-8") as f:
+    f.write("[नक्षत्र ग्रंथ पृ. 2]\nरोहिणी नक्षत्राचे चक्र खालीलप्रमाणे आहे.\n\n🖼 चित्र 1: images/p00002_1.png\n")
 env = dict(os.environ, GS_DOCS=docs, GS_PORT="8799", OLLAMA_HOST="http://127.0.0.1:11499",
            MOCK_PORT="11499", PYTHONIOENCODING="utf-8")
 mock = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "mock_ollama.py")], env=env)
@@ -279,7 +340,7 @@ try:
             return [json.loads(l) for l in r.read().decode().splitlines() if l]
 
     st = json.loads(urllib.request.urlopen("http://127.0.0.1:8799/status").read())
-    check("status: 2 फाइल्स", st["ok"] and st["files"] == 2)
+    check("status: 3 फाइल्स", st["ok"] and st["files"] == 3)
     ev = ask("अपचनात कोणता आहार घ्यावा?")
     types = [e["type"] for e in ev]
     check("उत्तर stream होते", "token" in types and types[-1] == "done")
@@ -302,6 +363,26 @@ try:
         {"date": "1990-13-45", "time": "6:30", "place": "पुणे"}).encode(), headers={"Content-Type": "application/json"})
     kr = json.loads(urllib.request.urlopen(req, timeout=20).read())
     check("/kundali: चुकीची तारीख -> नम्र error, crash नाही", kr["ok"] is False and kr["msg"])
+    _desc = os.path.join(_bk, "images", "p00002_1.png.desc")
+    for _ in range(40):
+        if os.path.exists(os.path.join(_bk, "चित्र_वर्णन_01.txt")):
+            break
+        time.sleep(0.5)
+    check("चित्र: दृष्टी-मॉडेलने वर्णन लिहिले, शोधण्याजोगी फाइल बनली", os.path.exists(_desc)
+          and "पृ. 2 — चित्र 1]" in open(os.path.join(_bk, "चित्र_वर्णन_01.txt"), encoding="utf-8").read())
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "रोहिणी नक्षत्राचे चक्र", "agent": "jyotish"}).encode(), headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    _imgs = next((e["images"] for e in ev if e["type"] == "images"), [])
+    check("उत्तरासोबत ग्रंथातील चित्र", _imgs and _imgs[0].endswith("images/p00002_1.png"))
+    if _imgs:
+        _r = urllib.request.urlopen("http://127.0.0.1:8799/img?p=" + urllib.parse.quote(_imgs[0]))
+        check("/img: चित्र मिळते", _r.status == 200 and len(_r.read()) > 1000)
+    try:
+        urllib.request.urlopen("http://127.0.0.1:8799/img?p=" + urllib.parse.quote("../../etc/passwd"))
+        check("/img: granth बाहेरील फाइल नाही", False)
+    except urllib.error.HTTPError:
+        check("/img: granth बाहेरील फाइल नाही", True)
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:
