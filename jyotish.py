@@ -311,7 +311,10 @@ def find_yogas(chart):
         if (p["sign"] - L) % 12 in (0, 3, 6, 9) and ("स्वराशी" in p["status"] or "उच्च" in p["status"]):
             ys.append((f"{yname} योग (पंचमहापुरुष)", f"{g} लग्नापासून केंद्रात, {'/'.join(p['status'])}"))
     others = [P[g]["sign"] for g in ("मंगळ", "बुध", "गुरु", "शुक्र", "शनि")]
-    if (moon_s + 1) % 12 not in others and (moon_s - 1) % 12 not in others:
+    # केमद्रुम: चंद्रापासून २ऱ्या व १२व्या स्थानी ग्रह नाही — पण चंद्रासोबत किंवा चंद्रापासून केंद्रात ग्रह असेल
+    # तर बहुतेक ग्रंथांनुसार (उदा. फलदीपिका) योग भंग होतो, म्हणून तेव्हा तो दाखवत नाही
+    bhanga = any((x - moon_s) % 12 in (0, 3, 6, 9) for x in others)
+    if (moon_s + 1) % 12 not in others and (moon_s - 1) % 12 not in others and not bhanga:
         ys.append(("केमद्रुम योग", "चंद्रापासून दुसऱ्या आणि बाराव्या स्थानी (सूर्य, राहू, केतू सोडून) ग्रह नाही"))
     return [{"name": n, "why": w} for n, w in ys]
 
