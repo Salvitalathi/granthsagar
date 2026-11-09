@@ -1400,9 +1400,22 @@ def ask_cli(questions):
     load_index(); rebuild_vecs(); build_index(lambda *_: None)
     rows = []
     for q in questions:
-        print(f"\n## ❓ {q}\n")
+        agent_id, chart = None, None
+        m = re.match(r"^@(\w+)(?:\[([^\]]*)\])?\s+(.*)$", q)     # "@jyotish[1990-08-15 06:30 पुणे] प्रश्न"
+        if m:
+            agent_id, birth, q = m.group(1), m.group(2), m.group(3)
+            if birth:
+                d, t, place = birth.split(None, 2)
+                chart = kundali_from({"date": d, "time": t, "place": place})
+        print(f"\n## ❓ {q}" + (f"  · agent: {agent_id}" if agent_id else "") + "\n")
+        if chart:
+            import jyotish
+            print("```\n" + jyotish.summary_text(chart) + "\n```\n")
         t0, ans, srcs = time.time(), "", []
-        for ev in answer_events(q):
+        for ev in answer_events(q, (), agent_id, chart):
+            if ev["type"] == "padaccheda":
+                print("📝 पदच्छेद: " + " / ".join(" ".join(w[0] for w in p["words"])
+                                                  for it in ev["items"] for p in it["parts"]) + "\n")
             if ev["type"] == "token":
                 ans += ev["t"]
                 print(ev["t"], end="", flush=True)

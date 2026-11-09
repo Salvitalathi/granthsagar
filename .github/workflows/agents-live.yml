@@ -1,0 +1,48 @@
+name: Agents live test (खरा AI)
+on: workflow_dispatch
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GS_EMBED_MODEL: bge-m3
+      GS_DOCS: ${{ github.workspace }}/ci_granth
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q numpy skyfield
+      - run: |
+          m=$(python granthsagar.py --print-model); echo "GS_CHAT_MODEL=$m" >> "$GITHUB_ENV"; echo "model $m"
+          mkdir -p ci_granth/jyotish ci_granth/vyakarana
+          cp -r granth/jyotish/brihajjataka ci_granth/jyotish/
+          cp -r granth/vyakarana/ashtadhyayi granth/vyakarana/laghusiddhantakaumudi ci_granth/vyakarana/
+      - uses: actions/cache@v4
+        with: { path: ~/.ollama/models, key: "ollama-${{ env.GS_CHAT_MODEL }}-${{ env.GS_EMBED_MODEL }}" }
+      - uses: actions/cache@v4
+        with: { path: tools, key: "tools-de421-kosha-v1" }
+      - name: Ollama
+        run: |
+          mkdir -p ~/.ollama
+          docker run -d --name ollama -v ~/.ollama:/root/.ollama -p 11434:11434 ollama/ollama:latest
+          for i in $(seq 1 60); do curl -s localhost:11434/api/tags >/dev/null && break; sleep 1; done
+          for m in "$GS_CHAT_MODEL" "$GS_EMBED_MODEL"; do for i in 1 2 3; do docker exec ollama ollama pull "$m" >/dev/null && break || sleep 20; done; done
+          sudo chmod -R a+rX ~/.ollama
+      - name: Kosha + padaccheda + de421
+        run: |
+          python -c "import kosha; kosha.ready() or kosha.build()"
+          python -c "import padaccheda; padaccheda.ready() or padaccheda.build()"
+          python -c "import jyotish; jyotish.ensure_ephemeris()"
+      - uses: actions/cache/restore@v4
+        with: { path: index.json, key: "agents-index-${{ hashFiles('ci_granth/**') }}", restore-keys: "agents-index-" }
+      - run: python -u granthsagar.py --index
+        timeout-minutes: 120
+      - if: always()
+        uses: actions/cache/save@v4
+        with: { path: index.json, key: "agents-index-${{ hashFiles('ci_granth/**') }}-${{ github.run_id }}" }
+      - name: Ask
+        run: |
+          mapfile -t Q < <(grep -v '^\s*#' tests/questions_agents.txt | grep -v '^\s*$')
+          { echo "# 🪔 agents — खरी उत्तरे ($GS_CHAT_MODEL)"; echo; python -u granthsagar.py --ask "${Q[@]}"; } | tee answers.md
+          cat answers.md >> "$GITHUB_STEP_SUMMARY"
