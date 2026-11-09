@@ -133,14 +133,19 @@ def fetch_wikisource(title, mr, folder):
 
 
 # ---------------- GRETIL ----------------
-NUMREF = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\s*([a-f]{1,2})?\s*[.:]\s*")
+# "1.01ab: …", "1.01ab/ …", "1.09a …"
+NUMREF = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\s*([a-f]{1,2})?(?:\s*[.:/]\s*|\s+(?=[^\d\s]))")
 # "… // BS_1.1 //", "|| 1.1 ||", "// BrJ_2,3 //"
-ENDREF = re.compile(r"(?:/{1,2}|\|{1,2})\s*(?:[A-Za-z]+[_ ]?)?(\d{1,3})[.,](\d{1,3})(?:[.,]\d{1,3})?\s*(?:/{1,2}|\|{1,2})?\s*$")
+ENDREF = re.compile(r"(?:/{1,2}|\|{1,2})\s*(?:\([^)]*\)\s*)?(?:[A-Za-z]+[_ ]?)?(\d{1,3})[.,](\d{1,3})(?:[.,]\d{1,3})?\s*(?:/{1,2}|\|{1,2})?\s*$")
 
 
 def gretil_line_to_deva(ln, h_visarga):
     ln = ln.replace("^", "").replace("+", "").replace("*", "")
     ln = re.sub(r"\((?:[a-z]\s+)?[^()]{0,40}\)", "", ln)                 # (ब् मयनाम) पाठभेद
+    ln = re.sub(r"\[[^\]]{0,40}\]", "", ln)                                # [k.kṛte] पाठभेद
+    if ln.count(".") > 3 and ln.count(" ") < ln.count(".") / 3:          # mūrtitve.parikalpitaḥ.śaśa… शब्द '.' ने जोडलेले
+        ln = ln.replace(".", " ")
+    ln = ln.replace("//", " ॥").replace("/", " । ")
     if h_visarga:                                                        # महासुरह् -> महासुरः
         ln = re.sub(r"(?<=[aāiīuūeo])h(?=[\s|/.,;]|$)", "ḥ", ln)
     return iast_to_deva(ln).replace("|", "।")
@@ -164,6 +169,9 @@ def fetch_gretil(url, mr, folder):
                 ch, vs, text = int(parts[i]), int(parts[i + 1]), parts[i + 3].strip()
                 if text:
                     verses.setdefault((ch, vs), []).append(gretil_line_to_deva(text, h_visarga))
+            pending = []
+            continue
+        if re.search(r"\([A-Za-z]+_\d+\)\s*$", ln):    # ".rāśi.prabheda(BJ_01)" — अध्याय-शीर्षक
             pending = []
             continue
         m = ENDREF.search(ln)
