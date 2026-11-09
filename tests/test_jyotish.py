@@ -41,9 +41,9 @@ for d, t, city in CASES:
         L = swe.calc_ut(jd, pid, swe.FLG_SIDEREAL | swe.FLG_MOSEPH)[0][0]
         e = diff(L, P[g]["lon"])
         worst["planet"] = max(worst["planet"], e)
-        flag = "" if e < 0.02 else "  ❌"
+        flag = "" if e < 5 / 3600 else "  ❌"
         print(f"  {g:6} swe {L:9.4f}  आपले {P[g]['lon']:9.4f}  फरक {e*3600:6.1f}\"{flag}")
-        if e >= 0.02:
+        if e >= 5 / 3600:
             fail.append(f"{d} {g} {e:.4f}°")
         if int(L // 30) != P[g]["sign"] and min(L % 30, 30 - L % 30) > 0.05:
             fail.append(f"{d} {g} राशी चुकली")
@@ -51,7 +51,7 @@ for d, t, city in CASES:
     e = diff(ascmc[0], c["lagna"]["lon"])
     worst["lagna"] = max(worst["lagna"], e)
     print(f"  लग्न   swe {ascmc[0]:9.4f}  आपले {c['lagna']['lon']:9.4f}  फरक {e*3600:6.1f}\"")
-    if e >= 0.05:
+    if e >= 5 / 3600:
         fail.append(f"{d} लग्न {e:.4f}°")
     print("  " + J.summary_text(c).replace("\n", "\n  "))
 
@@ -65,7 +65,7 @@ assert J.chart_svg(c).startswith("<svg") and "ल" in J.chart_svg(c)
 assert J.search_queries(c)
 print("दशा:", [(p["graha"], p["from"]) for p in per[:3]])
 
-if worst["ayan"] > 0.01:
+if worst["ayan"] > 1 / 3600:
     fail.append(f"अयनांश फरक {worst['ayan']*3600:.1f}\"")
 if fail:
     print("\n❌ चुका:", fail); sys.exit(1)

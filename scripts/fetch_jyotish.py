@@ -139,7 +139,13 @@ NUMREF = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\s*([a-f]{1,2})?(?:\s*[.:/]\
 ENDREF = re.compile(r"(?:/{1,2}|\|{1,2})\s*(?:\([^)]*\)\s*)?(?:[A-Za-z]+[_ ]?)?(\d{1,3})[.,](\d{1,3})(?:[.,]\d{1,3})?\s*(?:/{1,2}|\|{1,2})?\s*$")
 
 
+_SANDHI = [(r"[aā]\^[aā]", "ā"), (r"[aā]\^[iī]", "e"), (r"[aā]\^[uū]", "o"), (r"[aā]\^e", "ai"),
+           (r"[aā]\^o", "au"), (r"[iī]\^[iī]", "ī"), (r"[uū]\^[uū]", "ū"), (r"[aā]\^ṛ", "ar")]
+
+
 def gretil_line_to_deva(ln, h_visarga):
+    for rx, v in _SANDHI:                       # na^ati -> nāti, mālā^arcitaḥ -> mālārcitaḥ
+        ln = re.sub(rx, v, ln)
     ln = ln.replace("^", "").replace("+", "").replace("*", "")
     ln = re.sub(r"\((?:[a-z]\s+)?[^()]{0,40}\)", "", ln)                 # (ब् मयनाम) पाठभेद
     ln = re.sub(r"\[[^\]]{0,40}\]", "", ln)                                # [k.kṛte] पाठभेद
@@ -212,7 +218,9 @@ def fetch_archive(ident, title, folder):
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"(?im)^.*(digitized by|google|generated .* (on|by)).*$", "", t)     # scan च्या खुणा
     junk = re.compile(r"google|public domain|digitized|book search|discoverable online|marginalia|"
-                      r"usage guidelines|automated querying|watermark|internet archive", re.I)
+                      r"usage guidelines|automated querying|watermark|internet archive|gateways to the past|"
+                      r"marks, notations|copyright infringement|long journey from the|anywhere in the world|"
+                      r"maiginalia|liabili|publisher to a library|expired and the book", re.I)
     paras = [p.strip() for p in re.split(r"\n\s*\n", t) if len(p.strip()) > 40 and not junk.search(p)]
     blocks, cur, size, k = [], [], 0, 1
     for p in paras:
