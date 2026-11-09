@@ -81,7 +81,7 @@ def body_to_deva(b):
     b = re.sub(r"\{[#@%]|[#@%]\}", "", b)
     b = b.replace("..", "॥").replace(" .", " ।")
     out = []
-    for tok in re.split(r"(\s+|—)", b):
+    for tok in re.split(r"(\s+|—|-)", b):
         if re.fullmatch(r"[a-zA-Z~']+[0-9]?", tok) and not re.fullmatch(r"[A-Z][a-z]+", tok):
             m = re.fullmatch(r"([a-zA-Z~']+)0", tok)        # pu0 -> पुं० (संक्षेप)
             out.append(slp1_to_deva(m.group(1)) + "०" if m else slp1_to_deva(tok))
@@ -106,7 +106,12 @@ def parse(path):
                 key, buf = (m.group(1).strip() if m else None), []
             elif line.startswith("<LEND>"):
                 if key:
-                    yield key, " ".join(l.strip() for l in buf)
+                    body = ""
+                    for l in buf:                       # ओळीच्या शेवटी 'niHkzattriyAmaka-' + 'rot' -> एक शब्द
+                        l = l.strip()
+                        body = body[:-1] + l if body.endswith("-") and not body.endswith("--") else \
+                            (body + " " + l if body else l)
+                    yield key, body
                 key = None
             elif key is not None:
                 buf.append(line)
@@ -184,9 +189,16 @@ def candidates(word):
         if w.endswith(suf) and len(w) - len(suf) >= 2:
             out.append(w[:-len(suf)])
     for x in list(out):                          # संस्कृत प्रथमा: रामः -> राम, फलम् -> फल, ज्ञानं -> ज्ञान
-        for end, rep in (("ः", ""), ("म्", ""), ("ं", ""), ("ा", ""), ("ाः", ""), ("ानि", "")):
+        for end, rep in (("ः", ""), ("म्", ""), ("ं", ""), ("ाः", ""), ("ानि", "")):
             if x.endswith(end) and len(x) - len(end) >= 2:
                 out.append(x[:len(x) - len(end)] + rep)
+    for x in list(out):                          # शब्दकल्पद्रुमात शीर्षशब्द प्रथमेत: राम -> रामः
+        if re.search(r"[\u0915-\u0939]$", x):
+            out += [x + "ः", x + "म्"]
+    for x in list(out):                          # जुने लेखन: धर्म -> धर्म्म, कार्य -> कार्य्य
+        y = re.sub(r"र्([\u0915-\u0939])(?!्)", r"र्\1्\1", x)
+        if y != x:
+            out.append(y)
     seen, res = set(), []
     for x in out:
         if x and x not in seen:
