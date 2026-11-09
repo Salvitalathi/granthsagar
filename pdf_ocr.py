@@ -418,7 +418,7 @@ def fix_sanskrit(text):
 
 
 def sharpness(img):
-    """Laplacian variance — कमी = धूसर/blur पान (स्वच्छ scan ~100+, धूसर ~5)"""
+    """Laplacian variance — कमी = धूसर/blur पान (स्वच्छ scan ~500+, धूसर ~40)"""
     import numpy as np
     a = np.asarray(img.convert("L"), dtype=np.float32)[::2, ::2]
     lap = a[1:-1, 1:-1] * 4 - a[:-2, 1:-1] - a[2:, 1:-1] - a[1:-1, :-2] - a[1:-1, 2:]
@@ -430,7 +430,7 @@ def enhance_if_blurry(png):
     try:
         from PIL import Image, ImageFilter, ImageOps
         img = Image.open(png).convert("L")
-        if sharpness(img) < 40:
+        if sharpness(img) < 150:
             ImageOps.autocontrast(img, cutoff=1).filter(ImageFilter.UnsharpMask(2, 150, 3)).save(png)
             return True
     except Exception:
