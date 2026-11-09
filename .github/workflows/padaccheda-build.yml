@@ -1,0 +1,24 @@
+name: Build padaccheda data (DCS)
+on:
+  workflow_dispatch:
+    inputs:
+      args: { description: "--list किंवा ग्रंथांची नावे (रिकामे = DEFAULT)", default: "--list" }
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python scripts/build_padaccheda.py ${{ github.event.inputs.args }}
+      - name: Commit to branch padaccheda-data
+        if: github.event.inputs.args != '--list'
+        run: |
+          zcat data/padaccheda/bhagavadgita.jsonl.gz 2>/dev/null | head -3 || true
+          git config user.name "granthsagar-bot"; git config user.email "actions@users.noreply.github.com"
+          git checkout -b padaccheda-data
+          git add data/padaccheda
+          git commit -m "पदच्छेद-माहिती (DCS, CC BY 4.0)"
+          git push -f origin padaccheda-data
