@@ -15,3 +15,4 @@ pdf_inbox/*
 tessdata/
 tools/*.bsp
 tools/kosha/
+tools/padaccheda.db*

@@ -366,6 +366,21 @@ check("शब्दकोश: 'धर्माचा' -> धर्म (वाच
       len(_l) == 2 and _l[0][1] == "धर्म" and "धृ—मन्" in _l[0][2] and "धर्मो रक्षति रक्षितः" in _l[0][2])
 check("शब्दकोश: प्रश्नातील शब्द", kosha.words_in('"धर्म" शब्दाचा अर्थ वाचस्पत्यम् मध्ये काय आहे?') == ["धर्म"])
 
+# ---- 2h. पदच्छेद (DCS) ----
+import padaccheda
+_pdir = tempfile.mkdtemp()
+padaccheda.DB = os.path.join(_pdir, "p.db")
+padaccheda.build(lambda m: None, os.path.join(ROOT, "tests", "data", "padaccheda"))
+_pa = padaccheda.analyze_line("कर्मण्येवाधिकारस्ते मा फ़लेषु कदाचन । मा कर्मफलहेतुर्भूर्मा ते सङ्गोऽस्त्वकर्मणि ॥४७॥")
+check("पदच्छेद: गीता 2.47 (OCR चुका असूनही) — दोन्ही श्लोकार्ध, क्रमाने",
+      len(_pa) == 2 and _pa[0]["words"][0][:2] == ("कर्मणि", "कर्मन्") and _pa[1]["words"][-1][0] == "अकर्मणि")
+check("पदच्छेद: व्याकरण मराठीत", "सप्तमी" in _pa[0]["words"][0][2] and "आज्ञार्थ" in _pa[1]["words"][8][2])
+check("पदच्छेद: DCS मध्ये नसलेला श्लोक -> काहीच नाही (अंदाज नाही)",
+      padaccheda.analyze_line("यस्योदये जगदिदं प्रतिबोधमेति मध्यस्थिते प्रसरति प्रकृतिक्रियासु") == [])
+check("पदच्छेद: मराठी प्रश्नातून फक्त श्लोक-ओळी",
+      padaccheda.sanskrit_lines("याचा अर्थ काय आहे?\nतपःस्वाध्यायनिरतं तपस्वी वाग्विदां वरम् ।") ==
+      ["तपःस्वाध्यायनिरतं तपस्वी वाग्विदां वरम्"])
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)
@@ -379,7 +394,8 @@ os.makedirs(os.path.join(_bk, "images"))
 shutil.copy(os.path.join(ROOT, "tests", "data", "sample_scan.pdf"), os.path.join(_bk, "images", "p00002_1.png"))
 with open(os.path.join(_bk, "part_01.txt"), "w", encoding="utf-8") as f:
     f.write("[नक्षत्र ग्रंथ पृ. 2]\nरोहिणी नक्षत्राचे चक्र खालीलप्रमाणे आहे.\n\n🖼 चित्र 1: images/p00002_1.png\n")
-env = dict(os.environ, GS_KOSHA_DIR=_kd, GS_DOCS=docs, GS_PORT="8799", OLLAMA_HOST="http://127.0.0.1:11499",
+env = dict(os.environ, GS_KOSHA_DIR=_kd, GS_PADA_DB=padaccheda.DB,
+           GS_PADA_DATA=os.path.join(ROOT, "tests", "data", "padaccheda"), GS_DOCS=docs, GS_PORT="8799", OLLAMA_HOST="http://127.0.0.1:11499",
            MOCK_PORT="11499", PYTHONIOENCODING="utf-8")
 mock = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "mock_ollama.py")], env=env)
 app = subprocess.Popen([sys.executable, os.path.join(ROOT, "granthsagar.py"), "--no-browser"],
@@ -443,6 +459,12 @@ try:
     _src = sum((e["sources"] for e in ev if e["type"] == "sources"), [])
     check("व्याकरण agent: शब्दकोशातील अर्थ उत्तराच्या संदर्भात", "वाचस्पत्यम्: धर्म" in _src
           and any("CC BY-SA" in x for x in _src))
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "कर्मण्येवाधिकारस्ते मा फलेषु कदाचन । याचा अर्थ सांगा", "agent": "vyakarana"}).encode(),
+        headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    _pe = next((e for e in ev if e["type"] == "padaccheda"), None)
+    check("उत्तरासोबत पदच्छेद-तक्ता", _pe and _pe["items"][0]["parts"][0]["words"][2][0] == "अधिकारः")
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:

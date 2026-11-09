@@ -15,9 +15,12 @@ import os
 import re
 import sqlite3
 import threading
+import zlib
+
+from kosha import deva_to_slp1
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.join(HERE, "data", "padaccheda")
+DATA = os.environ.get("GS_PADA_DATA", os.path.join(HERE, "data", "padaccheda"))
 DB = os.environ.get("GS_PADA_DB", os.path.join(HERE, "tools", "padaccheda.db"))
 CREDIT = "Digital Corpus of Sanskrit (O. Hellwig), CC BY 4.0"
 STATUS = {"state": "", "msg": ""}
@@ -75,10 +78,21 @@ _KEEP = re.compile(r"[^अ-हा-्ंःॠ-ॣ]")
 def norm(deva):
     """फक्त अक्षरे; अनुस्वार/वर्गीय अनुनासिक एकसारखे (सङ्गो = संगो), शेवटचा म् = ं"""
     s = deva.replace("ॐ", "")
+    s = re.sub(r"(?<=[\u0915-\u0939\u093E-\u094C\u0902])\s?:", "ः", s)     # OCR: नित्य: -> नित्यः
     s = re.sub(r"[ङञणनम]्(?=[क-ह])", "ं", s)
     s = re.sub(r"म्(?=\s|$|[।॥])", "ं", s)
     s = _KEEP.sub("", s)
+    # 'कर्मण्य् एवा' (DCS, शब्द वेगळे) = 'कर्मण्येवा' (छापील): व्यंजन+् + स्वर -> मात्रा
+    s = re.sub("्([अआइईउऊऋएऐओऔ])", lambda m: _MATRA[m.group(1)], s)
     return s
+
+
+_MATRA = {"अ": "", "आ": "ा", "इ": "ि", "ई": "ी", "उ": "ु", "ऊ": "ू", "ऋ": "ृ", "ए": "े", "ऐ": "ै", "ओ": "ो", "औ": "ौ"}
+
+
+def key(deva):
+    """तुलनेची किल्ली — लहान (ASCII SLP1), त्यामुळे डेटाबेस लहान"""
+    return deva_to_slp1(norm(deva))
 
 
 def to_deva(iast):
@@ -95,9 +109,9 @@ def build(progress=print, data_dir=None):
     if os.path.exists(tmp):
         os.remove(tmp)
     con = sqlite3.connect(tmp)
-    con.execute("CREATE TABLE s (id INTEGER PRIMARY KEY, g TEXT, r TEXT, t TEXT, k TEXT, w TEXT)")
+    con.execute("CREATE TABLE s (id INTEGER PRIMARY KEY, g TEXT, r TEXT, t TEXT, k TEXT, w BLOB)")
     try:
-        con.execute("CREATE VIRTUAL TABLE f USING fts5(k, tokenize='trigram')")
+        con.execute("CREATE VIRTUAL TABLE f USING fts5(k, content='', tokenize='trigram')")
         fts = True
     except sqlite3.OperationalError:
         fts = False
@@ -108,12 +122,12 @@ def build(progress=print, data_dir=None):
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             for line in fh:
                 s = json.loads(line)
-                t = to_deva(s["t"])
-                k = norm(t)
+                k = key(to_deva(s["t"]))
                 if len(k) < 6:
                     continue
                 n += 1
-                rows.append((n, s.get("g", ""), s.get("r") or "", t, k, json.dumps(s["w"], ensure_ascii=False)))
+                w = zlib.compress(json.dumps(s["w"], ensure_ascii=False, separators=(",", ":")).encode("utf-8"), 9)
+                rows.append((n, s.get("g", ""), s.get("r") or "", s["t"], k, w))
                 if len(rows) >= 5000:
                     con.executemany("INSERT INTO s VALUES (?,?,?,?,?,?)", rows)
                     if fts:
@@ -168,7 +182,7 @@ def _candidates(con, key, limit=40):
     try:
         grams = [key[i:i + 6] for i in range(0, max(1, len(key) - 5), 4)][:12]
         q = " OR ".join('"' + g.replace('"', "") + '"' for g in grams if len(g) >= 3)
-        ids = [r[0] for r in con.execute("SELECT rowid FROM f WHERE f MATCH ? LIMIT 400", (q,))]
+        ids = [r[0] for r in con.execute("SELECT rowid FROM f WHERE f MATCH ? ORDER BY rank LIMIT 300", (q,))]
     except sqlite3.OperationalError:
         return []
     if not ids:
@@ -179,21 +193,22 @@ def _candidates(con, key, limit=40):
 
 def analyze_line(line, con=None):
     """एक श्लोक-ओळ -> [{g, r, t, words:[(पद, मूळ, व्याकरण)]}] (ओळ झाकणारे DCS श्लोकार्ध, क्रमाने)"""
-    key = norm(line)
-    if len(key) < 8 or not ready():
+    qk = key(line)
+    if len(qk) < 8 or not ready():
         return []
     own = con is None
     con = con or sqlite3.connect(DB)
     try:
-        cands = _candidates(con, key)
+        cands = _candidates(con, qk)
         scored = []
         for row in cands:
             ck = row[4]
-            sm = difflib.SequenceMatcher(None, ck, key, autojunk=False)
+            sm = difflib.SequenceMatcher(None, ck, qk, autojunk=False)
             cover = sum(b.size for b in sm.get_matching_blocks()) / max(len(ck), 1)
-            if cover >= 0.8 and len(ck) <= len(key) * 1.25:
-                pos = key.find(ck[:6]) if ck[:6] in key else sm.find_longest_match(0, len(ck), 0, len(key)).b
-                scored.append((cover, pos, row))
+            matched = cover * len(ck)
+            if cover >= 0.8 and len(ck) <= len(qk) * 1.25 and len(ck) >= min(12, len(qk) * 0.8):
+                pos = qk.find(ck[:6]) if ck[:6] in qk else sm.find_longest_match(0, len(ck), 0, len(qk)).b
+                scored.append((matched, pos, row))
         scored.sort(key=lambda x: (-x[0], x[1]))
         chosen, used = [], []
         for cover, pos, row in scored:              # ओळ झाकणारे, एकमेकांवर न येणारे
@@ -202,12 +217,15 @@ def analyze_line(line, con=None):
                 continue
             used.append(span)
             chosen.append((pos, row))
-            if sum(b - a for a, b in used) >= len(key) * 0.9:
+            if sum(b - a for a, b in used) >= len(qk) * 0.9:
                 break
+        if sum(b - a for a, b in used) < len(qk) * 0.6:     # ओळीचा मोठा भाग DCS मध्ये नाही — अंदाज नको
+            return []
         out = []
         for pos, (_id, g, r, t, k, w) in sorted(chosen):
-            words = [(to_deva(f), to_deva(lem), grammar_mr(up, ft)) for f, lem, up, ft in json.loads(w)]
-            out.append({"g": g, "r": r, "t": t, "words": words})
+            ws = json.loads(zlib.decompress(w).decode("utf-8"))
+            words = [(to_deva(f), to_deva(lem), grammar_mr(up, ft)) for f, lem, up, ft in ws]
+            out.append({"g": g, "r": r, "t": to_deva(t), "words": words})
         return out
     finally:
         if own:
@@ -220,15 +238,12 @@ _HI = set("है हैं के में की और को से का 
 def sanskrit_lines(text, limit=4):
     """मजकुरातील संस्कृत श्लोक-ओळी (हिंदी/मराठी गद्य वगळून)"""
     out = []
-    for ln in re.split(r"\n|(?<=॥)\s*|(?<=[०-९\d]॥)", text):
-        ln = ln.strip()
+    for ln in re.split(r"\n|(?<=[।॥])\s*", text):       # श्लोकार्धानुसार
+        ln = re.sub(r"^\[[^\]]*\]\s*", "", ln.strip())
+        ln = re.sub(r"[।॥\s०-९\d]+$", "", ln).strip()
         words = re.findall(r"[ऀ-ॣॱ-ॿ]+", ln)
         if len(words) < 3 or any(w in _HI for w in words):
             continue
-        if not re.search(r"[।॥]|[ःम्]\s|ः$", ln + " "):
-            continue
-        if ln.startswith("["):
-            ln = ln.split("]", 1)[-1].strip()
         out.append(ln)
         if len(out) >= limit:
             break

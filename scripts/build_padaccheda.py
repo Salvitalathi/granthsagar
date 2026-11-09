@@ -80,7 +80,9 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     total = 0
     for n in names:
-        slug = re.sub(r"[^a-z0-9]+", "_", n.lower().encode("ascii", "ignore").decode()).strip("_") or "x"
+        import unicodedata
+        plain = unicodedata.normalize("NFKD", n).encode("ascii", "ignore").decode().lower()
+        slug = re.sub(r"[^a-z0-9]+", "_", plain).strip("_") or "x"
         path = os.path.join(OUT, slug + ".jsonl.gz")
         k = 0
         with gzip.open(path, "wt", encoding="utf-8", compresslevel=9) as f:

@@ -16,6 +16,7 @@ import json, os, re, sys, subprocess, math, time, hashlib, shutil, threading, we
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import agents
 import kosha
+import padaccheda
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
 # MODE = "granth" -> ग्रंथांचा अर्थ मराठीत समजावणे + आरोग्य सुरक्षितता; "general" -> साधा मदतनीस
@@ -47,7 +48,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.7"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.8"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -1026,6 +1027,8 @@ form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
 #kPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
 .kchart{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.kchart svg{max-width:100%;height:auto}
 .figs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.figs img{max-height:180px;max-width:240px;border:1px solid #ccc;border-radius:6px;background:#fff}
+.pada{margin-top:8px;font-size:14px}.pada summary{cursor:pointer;color:#1f4e5f;font-weight:600}.pada .pl{margin:6px 0 2px;font-weight:600}
+.pada table{border-collapse:collapse}.pada td{border:1px solid #ddd;padding:2px 8px}.pada td:nth-child(3){color:#555}
 .chip{display:inline-block;background:#fff;border:1px solid #c9bda3;border-radius:14px;padding:3px 10px;margin:3px;cursor:pointer;font-size:13px}
 textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
 </style></head><body>
@@ -1087,15 +1090,19 @@ async function openInbox(){try{const r=await (await fetch('/open-inbox',{method:
 async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
- const b=add('bot','…');let ans='',srcs=[],imgs=[];
+ const b=add('bot','…');let ans='',srcs=[],imgs=[],pada=null;
  try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist.slice(-6),agent:agent,birth:(AG[agent]&&AG[agent].kundali)?birth:null})});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
-    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
+    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='padaccheda')pada=m;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
     else if(m.type==='alert'){const a=document.createElement('div');a.className='alert';a.textContent=m.msg;chat.insertBefore(a,b)}
     else if(m.type==='error'){ans+='\n⚠️ '+m.msg;b.textContent=ans}}}
  }catch(e){b.textContent='⚠️ '+e}
+ if(pada){const d=document.createElement('details');d.className='pada';const sm=document.createElement('summary');sm.textContent='📝 पदच्छेद आणि व्याकरण';d.appendChild(sm);
+  pada.items.forEach(it=>it.parts.forEach(p=>{const h=document.createElement('div');h.className='pl';h.textContent=p.t+(p.g?'  ('+p.g+(p.r?' '+p.r:'')+')':'');d.appendChild(h);
+   const t=document.createElement('table');p.words.forEach(w=>{const tr=document.createElement('tr');w.forEach(x=>{const td=document.createElement('td');td.textContent=x;tr.appendChild(td)});t.appendChild(tr)});d.appendChild(t)}));
+  const c=document.createElement('div');c.className='src';c.textContent=pada.credit;d.appendChild(c);b.appendChild(d)}
  if(imgs.length){const g=document.createElement('div');g.className='figs';imgs.forEach(p=>{const a=document.createElement('a');a.href='/img?p='+encodeURIComponent(p);a.target='_blank';
   const im=document.createElement('img');im.src=a.href;im.title=p;a.appendChild(im);g.appendChild(a)});b.appendChild(g)}
  if(srcs.length){const s=document.createElement('div');s.className='src';s.textContent='📄 संदर्भ: '+srcs.join(', ');b.appendChild(s)}
@@ -1172,8 +1179,10 @@ class Handler(BaseHTTPRequestHandler):
                         "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
                         "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
                         "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION,
-                        "fig": FIG_STATUS["running"] or kosha.STATUS.get("state") == "building",
-                        "fig_msg": FIG_STATUS["msg"] if FIG_STATUS["running"] else kosha.STATUS.get("msg", "")})
+                        "fig": FIG_STATUS["running"] or "building" in (kosha.STATUS.get("state"), padaccheda.STATUS.get("state")),
+                        "fig_msg": FIG_STATUS["msg"] if FIG_STATUS["running"] else
+                        (kosha.STATUS.get("msg", "") if kosha.STATUS.get("state") == "building"
+                         else padaccheda.STATUS.get("msg", ""))})
         elif self.path.startswith("/img?"):
             from urllib.parse import urlparse, parse_qs
             rel = parse_qs(urlparse(self.path).query).get("p", [""])[0]
@@ -1302,6 +1311,17 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
         user_msg = f"संदर्भ:\n{ctx}\n\n---\n"
     else:
         user_msg = ""
+    if padaccheda.ready():                      # श्लोकांचा पदच्छेद (DCS — तपासलेले विश्लेषण)
+        try:
+            pres = padaccheda.analyze_text(question, 3)
+            if not pres and hits:
+                pres = padaccheda.analyze_text("\n".join(t for _, _, t in hits[:2]), 3)
+        except Exception:
+            pres = []
+        if pres:
+            user_msg += ("पदच्छेद आणि व्याकरण (Digital Corpus of Sanskrit — विद्वानांनी तपासलेले; अर्थ सांगताना "
+                         "हेच वापर):\n" + padaccheda.context_text(pres) + "\n\n---\n")
+            yield {"type": "padaccheda", "items": pres, "credit": padaccheda.CREDIT}
     if agent.get("kosha"):
         if kosha.ready():
             kctx, ksrc = kosha.context_for(question)
@@ -1472,6 +1492,7 @@ def main():
         threading.Timer(3, start_figures).start()     # चित्रांचे राहिलेले वर्णन
     if any(a.get("kosha") for a in agents.AGENTS) and not kosha.ready():
         kosha.ensure_background()                     # वाचस्पत्यम्/शब्दकल्पद्रुम (~50 MB, एकदाच)
+    padaccheda.ensure_background()                    # DCS पदच्छेद-माहिती -> sqlite (एकदाच, इंटरनेट नको)
     if pdf_ocr:
         threading.Thread(target=watch_folders, daemon=True).start()
     url = f"http://127.0.0.1:{PORT}"
