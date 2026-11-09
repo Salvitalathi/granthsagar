@@ -134,6 +134,8 @@ def fetch_wikisource(title, mr, folder):
 
 # ---------------- GRETIL ----------------
 NUMREF = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\s*([a-f]{1,2})?\s*[.:]\s*")
+# "… // BS_1.1 //", "|| 1.1 ||", "// BrJ_2,3 //"
+ENDREF = re.compile(r"(?:/{1,2}|\|{1,2})\s*(?:[A-Za-z]+[_ ]?)?(\d{1,3})[.,](\d{1,3})(?:[.,]\d{1,3})?\s*(?:/{1,2}|\|{1,2})?\s*$")
 
 
 def gretil_line_to_deva(ln, h_visarga):
@@ -152,14 +154,34 @@ def fetch_gretil(url, mr, folder):
             break
     h_visarga = "sUryasiddhAnta" in url
     verses = {}                                   # (अध्याय, श्लोक) -> [पाद]
+    pending = []                                  # शेवटी क्रमांक असलेल्या श्लोकांसाठी ("… // BS_1.1 //")
     for ln in lines:
-        parts = NUMREF.split(ln)
-        if len(parts) < 5:
+        if not ln.strip():
             continue
-        for i in range(1, len(parts) - 3, 4):
-            ch, vs, text = int(parts[i]), int(parts[i + 1]), parts[i + 3].strip()
+        parts = NUMREF.split(ln)
+        if len(parts) >= 5:                       # सुरुवातीला क्रमांक: "1.01ab: …"
+            for i in range(1, len(parts) - 3, 4):
+                ch, vs, text = int(parts[i]), int(parts[i + 1]), parts[i + 3].strip()
+                if text:
+                    verses.setdefault((ch, vs), []).append(gretil_line_to_deva(text, h_visarga))
+            pending = []
+            continue
+        m = ENDREF.search(ln)
+        if m:                                     # शेवटी क्रमांक
+            text = ln[:m.start()].strip()
             if text:
-                verses.setdefault((ch, vs), []).append(gretil_line_to_deva(text, h_visarga))
+                pending.append(text)
+            if pending:
+                key = (int(m.group(1)), int(m.group(2)))
+                verses.setdefault(key, []).extend(gretil_line_to_deva(t, h_visarga) for t in pending)
+            pending = []
+        elif re.search(r"[a-zA-Zāīūṛṃḥśṣṇñṅṭḍ]{3}", ln) and not ln.lstrip().startswith("#"):
+            pending.append(ln.strip())
+            pending = pending[-6:]
+    if not verses:                                # स्वरूप ओळखले नाही — CI log मध्ये नमुना
+        print(f"⚠️ {mr}: श्लोक-क्रमांक ओळखता आले नाहीत. नमुना ओळी:")
+        for ln in [l for l in lines if l.strip()][:25]:
+            print("   |", ln[:160])
     blocks, cur, chap = [], [], None
     for (ch, vs), padas in sorted(verses.items()):
         if ch != chap and cur:

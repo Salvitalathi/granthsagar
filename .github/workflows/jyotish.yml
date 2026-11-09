@@ -1,0 +1,16 @@
+name: Jyotish (कुंडली गणित)
+on:
+  push:
+    paths: ["jyotish.py", "tests/test_jyotish.py", ".github/workflows/jyotish.yml", "agents.py", "agents.json"]
+  workflow_dispatch:
+jobs:
+  kundali:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/cache@v4
+        with: { path: tools/de421.bsp, key: de421 }
+      - run: pip install -q skyfield pyswisseph numpy
+      - run: python tests/test_jyotish.py

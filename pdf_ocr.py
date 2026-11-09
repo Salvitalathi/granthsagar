@@ -99,8 +99,15 @@ def ensure_lang(tess, lang, force_local=False):
         try:
             print(f"⬇ {LANGS.get(lang, lang)} भाषा फाइल उतरवत आहे (एकदाच)…", flush=True)
             req = urllib.request.Request(TESSDATA_URL.format(lang), headers={"User-Agent": "granthsagar"})
-            with urllib.request.urlopen(req, timeout=120) as r, open(path + ".tmp", "wb") as f:
-                f.write(r.read())
+            for attempt in range(4):                     # 504 सारख्या तात्पुरत्या अडचणी — पुन्हा प्रयत्न
+                try:
+                    with urllib.request.urlopen(req, timeout=120) as r, open(path + ".tmp", "wb") as f:
+                        f.write(r.read())
+                    break
+                except Exception:
+                    if attempt == 3:
+                        raise
+                    time.sleep(5 * (attempt + 1))
             os.replace(path + ".tmp", path)
         except Exception as e:
             _LANG_FAILED[lang] = (f"{LANGS.get(lang, lang)} भाषेची OCR फाइल मिळाली नाही ({e}). "
