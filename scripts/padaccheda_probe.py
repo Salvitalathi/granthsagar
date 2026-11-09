@@ -2,7 +2,7 @@
 import time, sys, subprocess
 t0 = time.time()
 from sanskrit_parser import Parser
-p = Parser(output_encoding="Devanagari", input_encoding="Devanagari", lexical_lookup="combined")
+p = Parser(output_encoding="devanagari", input_encoding="devanagari", lexical_lookup="combined")
 print("load", round(time.time() - t0, 1), "s")
 TESTS = ["कर्मण्येवाधिकारस्ते", "मा कर्मफलहेतुर्भूर्मा ते सङ्गोऽस्त्वकर्मणि", "अजो नित्यः शाश्वतोऽयं पुराणो",
          "कथं सृष्टिरियं जाता जगतश्च लयः कथम्", "रामो लङ्कां याति", "पप्रच्छोपेत्य मैत्रेयः प्रणिपत्य कृताञ्जलिः",
