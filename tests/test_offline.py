@@ -341,6 +341,31 @@ check("done नंतरही pdf_inbox/ज्योतिष folder राह�
 gs.PDF_INBOX, gs.PDF_OUT = _old
 shutil.rmtree(_sd, ignore_errors=True)
 
+# ---- 2g. व्याकरण: सूत्र-शोध आणि शब्दकोश ----
+_saved = gs.VECS
+gs.VECS = [("vyakarana/mahabhashya/part_01.txt", "[महाभाष्य 6.1.77]\nइकः यण् अचि इति …", None, 1.0),
+           ("vyakarana/ashtadhyayi/part_01.txt", "[अष्टाध्यायी 6.1.76] छे च ।\n[अष्टाध्यायी 6.1.77] इको यणचि ।", None, 1.0),
+           ("vyakarana/kashika/part_02.txt", "[काशिका 6.1.77]\nइको यणचि ।\nइकः स्थाने यणादेशो भवति अचि परतः । दध्यत्र", None, 1.0),
+           ("vyakarana/laghusiddhantakaumudi/part_01.txt", "[लघुसिद्धान्तकौमुदी 15 = 6.1.77]\nइको यणचि ॥", None, 1.0),
+           ("vyakarana/kashika/part_02.txt", "[काशिका 6.1.78]\nएचोऽयवायावः ।", None, 1.0)]
+_r = gs.sutra_lookup("अष्टाध्यायी ६.१.७७ समजाव", agents.get("vyakarana"))
+_lab = [re.search(r"\[(अष्टाध्यायी|काशिका|लघुसिद्धान्तकौमुदी|महाभाष्य)[^\]]*6\.1\.77\]", t).group(1) for _, _, t in _r]
+check("सूत्र-शोध: ६.१.७७ -> सूत्र, काशिका, कौमुदी, महाभाष्य (क्रमाने)",
+      _lab == ["अष्टाध्यायी", "काशिका", "लघुसिद्धान्तकौमुदी", "महाभाष्य"])
+check("सूत्र-शोध: ज्योतिष प्रश्नात '1.1.1' -> नाही", gs.sutra_lookup("बृहज्जातक 1.1.1 चा अर्थ", agents.get("jyotish")) == [])
+gs.VECS = _saved
+import kosha
+check("SLP1 -> देवनागरी", kosha.slp1_to_deva("praRavastu trayAtmaka sidDAntakOmudI go'SveByaH")
+      == "प्रणवस्तु त्रयात्मक सिद्धान्तकौमुदी गोऽश्वेभ्यः")
+_kd = tempfile.mkdtemp()
+kosha.DB = os.path.join(_kd, "kosha.db"); kosha.KOSHA_DIR = _kd
+_ks = os.path.join(ROOT, "tests", "data", "kosha_sample.txt")
+kosha.build(lambda m: None, {"vcp": _ks, "skd": _ks})
+_l = kosha.lookup("धर्माचा")
+check("शब्दकोश: 'धर्माचा' -> धर्म (वाचस्पत्यम् + शब्दकल्पद्रुम), व्युत्पत्ती देवनागरीत",
+      len(_l) == 2 and _l[0][1] == "धर्म" and "धृ—मन्" in _l[0][2] and "धर्मो रक्षति रक्षितः" in _l[0][2])
+check("शब्दकोश: प्रश्नातील शब्द", kosha.words_in('"धर्म" शब्दाचा अर्थ वाचस्पत्यम् मध्ये काय आहे?') == ["धर्म"])
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)
@@ -354,7 +379,7 @@ os.makedirs(os.path.join(_bk, "images"))
 shutil.copy(os.path.join(ROOT, "tests", "data", "sample_scan.pdf"), os.path.join(_bk, "images", "p00002_1.png"))
 with open(os.path.join(_bk, "part_01.txt"), "w", encoding="utf-8") as f:
     f.write("[नक्षत्र ग्रंथ पृ. 2]\nरोहिणी नक्षत्राचे चक्र खालीलप्रमाणे आहे.\n\n🖼 चित्र 1: images/p00002_1.png\n")
-env = dict(os.environ, GS_DOCS=docs, GS_PORT="8799", OLLAMA_HOST="http://127.0.0.1:11499",
+env = dict(os.environ, GS_KOSHA_DIR=_kd, GS_DOCS=docs, GS_PORT="8799", OLLAMA_HOST="http://127.0.0.1:11499",
            MOCK_PORT="11499", PYTHONIOENCODING="utf-8")
 mock = subprocess.Popen([sys.executable, os.path.join(ROOT, "tests", "mock_ollama.py")], env=env)
 app = subprocess.Popen([sys.executable, os.path.join(ROOT, "granthsagar.py"), "--no-browser"],
@@ -412,6 +437,12 @@ try:
         check("/img: granth बाहेरील फाइल नाही", False)
     except urllib.error.HTTPError:
         check("/img: granth बाहेरील फाइल नाही", True)
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "धर्म शब्दाचा अर्थ सांगा", "agent": "vyakarana"}).encode(), headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    _src = sum((e["sources"] for e in ev if e["type"] == "sources"), [])
+    check("व्याकरण agent: शब्दकोशातील अर्थ उत्तराच्या संदर्भात", "वाचस्पत्यम्: धर्म" in _src
+          and any("CC BY-SA" in x for x in _src))
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:

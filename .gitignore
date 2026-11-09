@@ -14,3 +14,4 @@ pdf_inbox/*
 !pdf_inbox/README.txt
 tessdata/
 tools/*.bsp
+tools/kosha/

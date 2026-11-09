@@ -32,6 +32,18 @@ def raw(title):
     return get(W + urllib.parse.urlencode({"title": title, "action": "raw"})).decode("utf-8", "replace")
 
 
+def allpages(prefix):
+    import json
+    out, cont = [], {}
+    while True:
+        d = json.loads(get("https://sa.wikisource.org/w/api.php?" + urllib.parse.urlencode(
+            dict({"action": "query", "list": "allpages", "format": "json", "aplimit": 500, "apprefix": prefix}, **cont))))
+        out += [p["title"] for p in d["query"]["allpages"]]
+        if "continue" not in d:
+            return out
+        cont = d["continue"]
+
+
 def gretil_body(name):
     t = get(G + name + ".txt").decode("utf-8", "replace")
     i = t.find("# Text")
@@ -46,21 +58,26 @@ def deva(iast):
 # ---------------------------------------------------------------- अष्टाध्यायी
 def ashtadhyayi():
     blocks, n = [], 0
-    names = ["प्रथमः", "द्वितीयः", "तृतीयः", "चतुर्थः", "पञ्चमः", "षष्ठः", "सप्तमः", "अष्टमः"]
-    for k, nm in enumerate(names, 1):
+    pages = [t for t in allpages("अष्टाध्यायी/") if t.count("/") == 1]
+    print("   अष्टाध्यायी पाने:", pages)
+    seen = set()
+    for k, title in enumerate(pages, 1):
         try:
-            t = raw(f"अष्टाध्यायी/{nm} अध्यायः")
+            t = raw(title)
         except Exception as e:
-            print(f"⚠️ अष्टाध्यायी {k}: {e}"); continue
+            print(f"⚠️ {title}: {e}"); continue
         sutras = []
         for m in re.finditer(r"^\s*([०-९0-9]+)[.।]([०-९0-9]+)[.।]([०-९0-9]+)\s+(.+?)\s*$", t, flags=re.M):
             a, b, c = (int(x.translate(DN)) for x in m.groups()[:3])
             s = re.sub(r"<[^>]+>|\[\[|\]\]|'''?", "", m.group(4)).strip(" ।")
-            sutras.append(f"[अष्टाध्यायी {a}.{b}.{c}] {s} ।")
+            if (a, b, c) not in seen:
+                seen.add((a, b, c)); sutras.append(((a, b, c), f"[अष्टाध्यायी {a}.{b}.{c}] {s} ।"))
         n += len(sutras)
-        for i in range(0, len(sutras), 40):          # ४० सूत्रांचा एक गट
-            blocks.append("\n".join(sutras[i:i + 40]))
+        blocks += sutras
         time.sleep(0.5)
+    blocks.sort()
+    lines = [b for _, b in blocks]
+    blocks = ["\n".join(lines[i:i + 40]) for i in range(0, len(lines), 40)]   # ४० सूत्रांचा एक गट
     write_parts(os.path.join(OUT, "ashtadhyayi"), blocks)
     print(f"✅ अष्टाध्यायी: {n} सूत्रे")
     return n
@@ -69,12 +86,15 @@ def ashtadhyayi():
 # ---------------------------------------------------------------- काशिका
 def kashika():
     blocks, n, empty = [], 0, 0
-    for a, an in enumerate(ADHYAYA, 1):
-        for p, pn in enumerate(PADA, 1):
+    pages = [t for t in allpages("काशिका/") if t.count("/") == 2]
+    print(f"   काशिका पाने ({len(pages)}):", pages)
+    for title in pages:
+        if True:
             try:
-                txt = raw(f"काशिका/{an}ोऽध्यायः/{pn} पादः")
+                txt = raw(title)
             except Exception as e:
-                print(f"⚠️ काशिका {a}.{p}: {e}"); continue
+                print(f"⚠️ {title}: {e}"); continue
+            txt = txt.replace("`", "")
             txt = re.sub(r"</?poem>|\{\{[^}]*\}\}|'{2,3}|</\s*[०-९0-9]+\s*-\s*[०-९0-9]+\s*-\s*[०-९0-9]+\s*>", "", txt)
             parts = re.split(r"<\s*([०-९0-9]+)\s*-\s*([०-९0-9]+)\s*-\s*([०-९0-9]+)\s*>", txt)
             for i in range(1, len(parts) - 3, 4):
@@ -87,9 +107,10 @@ def kashika():
                 lines = [l.lstrip("। ").strip() for l in lines if l.strip("। ")]
                 if not lines:
                     empty += 1
-                blocks.append(f"[काशिका {ref}]\n{sutra} ।\n" + "\n".join(lines))
+                blocks.append((tuple(int(x) for x in ref.split(".")), f"[काशिका {ref}]\n{sutra} ।\n" + "\n".join(lines)))
                 n += 1
             time.sleep(0.5)
+    blocks = [b for _, b in sorted(dict(blocks).items())]
     write_parts(os.path.join(OUT, "kashika"), blocks)
     print(f"✅ काशिका: {n} सूत्रे ({empty} सूत्रांवर Wikisource वर वृत्ती अजून नाही)")
     return n

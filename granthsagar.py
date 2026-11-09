@@ -15,6 +15,7 @@
 import json, os, re, sys, subprocess, math, time, hashlib, shutil, threading, webbrowser, zipfile, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import agents
+import kosha
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
 # MODE = "granth" -> ग्रंथांचा अर्थ मराठीत समजावणे + आरोग्य सुरक्षितता; "general" -> साधा मदतनीस
@@ -46,7 +47,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.6"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.7"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -398,10 +399,38 @@ def agent_mask(agent):
     return _MASKS[key]
 
 
+SUTRA_WORDS = ("सूत्र", "अष्टाध्यायी", "अष्टाध्याय", "काशिका", "महाभाष्य", "पाणिनि", "पाणिनी", "कौमुदी", "वार्तिक")
+SUTRA_ORDER = ("[अष्टाध्यायी", "[काशिका", "[लघुसिद्धान्तकौमुदी", "[महाभाष्य")
+
+
+def sutra_lookup(question, agent=None):
+    """'अष्टाध्यायी 6.1.77' / 'सूत्र १-१-१' -> सूत्र, काशिका, कौमुदी, महाभाष्य"""
+    q = question.translate(DEVA_DIGITS)
+    if not ((agent and agent["id"] == "vyakarana") or any(w in question for w in SUTRA_WORDS)):
+        return []
+    m = re.search(r"(?<![\d.])([1-8])\s*[.\-,।]\s*([1-4])\s*[.\-,।]\s*(\d{1,3})(?![\d])", q)
+    if not m:
+        return []
+    ref = f"{m.group(1)}.{m.group(2)}.{int(m.group(3))}"
+    rx = re.compile(r"^\[[^\]\n]*? (?:= )?" + re.escape(ref) + r"\]", re.M)
+    found = []
+    for name, text, _, _ in VECS:
+        hit = rx.search(text)
+        if hit and (agent is None or agents.owns(agent, name)):
+            rank = next((i for i, p in enumerate(SUTRA_ORDER) if hit.group(0).startswith(p)), 9)
+            found.append((rank, name, text))
+    found.sort(key=lambda x: x[0])
+    out, seen = [], set()
+    for rank, name, text in found:              # प्रत्येक ग्रंथातून पहिला तुकडा
+        if rank not in seen:
+            seen.add(rank); out.append((1.0, name, text))
+    return out[:4]
+
+
 def search(query, agent=None, qvec=None, top_k=TOP_K):
     if not VECS:
         return []
-    direct = direct_lookup(query)
+    direct = direct_lookup(query) or sutra_lookup(query, agent)
     if agent is not None:
         direct = [h for h in direct if agents.owns(agent, h[1])]
     q = qvec if qvec is not None else embed([query])[0]
@@ -1063,7 +1092,7 @@ async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.valu
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
-    if(m.type==='sources')srcs=m.sources;else if(m.type==='images')imgs=m.images;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
+    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
     else if(m.type==='alert'){const a=document.createElement('div');a.className='alert';a.textContent=m.msg;chat.insertBefore(a,b)}
     else if(m.type==='error'){ans+='\n⚠️ '+m.msg;b.textContent=ans}}}
  }catch(e){b.textContent='⚠️ '+e}
@@ -1143,7 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
                         "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
                         "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
                         "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION,
-                        "fig": FIG_STATUS["running"], "fig_msg": FIG_STATUS["msg"]})
+                        "fig": FIG_STATUS["running"] or kosha.STATUS.get("state") == "building",
+                        "fig_msg": FIG_STATUS["msg"] if FIG_STATUS["running"] else kosha.STATUS.get("msg", "")})
         elif self.path.startswith("/img?"):
             from urllib.parse import urlparse, parse_qs
             rel = parse_qs(urlparse(self.path).query).get("p", [""])[0]
@@ -1272,6 +1302,16 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
         user_msg = f"संदर्भ:\n{ctx}\n\n---\n"
     else:
         user_msg = ""
+    if agent.get("kosha"):
+        if kosha.ready():
+            kctx, ksrc = kosha.context_for(question)
+            if kctx:
+                user_msg += f"शब्दकोश (संस्कृत-संस्कृत, मूळ ग्रंथ):\n{kctx}\n\n---\n"
+                yield {"type": "sources", "sources": ksrc + [f"({kosha.CREDIT})"]}
+        else:
+            kosha.ensure_background()
+            if kosha.STATUS.get("state") == "error":
+                yield {"type": "error", "msg": kosha.STATUS["msg"]}
     if kundali:
         import jyotish
         user_msg += "जन्मकुंडली (गणिताने काढलेली — हीच ग्रह-स्थिती वापर):\n" + jyotish.summary_text(kundali) + "\n\n---\n"
@@ -1430,6 +1470,8 @@ def main():
         safe_start_ocr()
         start_indexing()
         threading.Timer(3, start_figures).start()     # चित्रांचे राहिलेले वर्णन
+    if any(a.get("kosha") for a in agents.AGENTS) and not kosha.ready():
+        kosha.ensure_background()                     # वाचस्पत्यम्/शब्दकल्पद्रुम (~50 MB, एकदाच)
     if pdf_ocr:
         threading.Thread(target=watch_folders, daemon=True).start()
     url = f"http://127.0.0.1:{PORT}"
