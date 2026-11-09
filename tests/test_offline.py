@@ -369,6 +369,19 @@ check("शब्दकोश: 'धर्माचा' -> धर्म (वाच
       len(_l) == 2 and _l[0][1] == "धर्म" and "धृ—मन्" in _l[0][2] and "धर्मो रक्षति रक्षितः" in _l[0][2])
 check("शब्दकोश: प्रश्नातील शब्द", kosha.words_in('"धर्म" शब्दाचा अर्थ वाचस्पत्यम् मध्ये काय आहे?') == ["धर्म"])
 
+# ---- 2g2. chat मधून जन्म-माहिती ----
+import jyotish as _J
+check("जन्म-माहिती: '12 जुलै, 1977, रात्री 8:30 pm … अलिबाग'",
+      _J.parse_birth("नाव - मंगेश, जन्माची वेळ (12 जुलै, 1977, रात्री 8:30 pm) ठिकाण- अलिबाग, जिल्हा- रायगड")
+      == {"date": "1977-07-12", "time": "20:30", "place": "अलिबाग"})
+check("जन्म-माहिती: १५/०८/१९९० सकाळी ६.३० पुणे; दुपारी 2:15 = 14:15; रात्री 1:10 = 01:10",
+      _J.parse_birth("जन्म १५/०८/१९९० सकाळी ६.३० पुणे") == {"date": "1990-08-15", "time": "06:30", "place": "पुणे"}
+      and _J.parse_birth("3 मार्च 2001 दुपारी 2:15")["time"] == "14:15"
+      and _J.parse_birth("5 May 1990 रात्री 1:10")["time"] == "01:10")
+check("जन्म-माहिती: साधा प्रश्न -> काहीच नाही", _J.parse_birth("मेष लग्नाचे फल काय? मे महिन्यात") == {})
+check("रत्न-सल्ला ओळखणे", bool(gs.GEM_ADVICE.search("मंगळासाठी सोन्याच्या अंगठीत मूंगा जडवून घाला"))
+      and not gs.GEM_ADVICE.search("ग्रंथात रत्नांचे वर्णन आहे"))
+
 # ---- 2h. पदच्छेद (DCS) ----
 import padaccheda
 _pdir = tempfile.mkdtemp()
@@ -473,6 +486,12 @@ try:
     ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
     _t = "".join(e.get("t", "") for e in ev if e["type"] == "token")
     check("ज्योतिष: मृत्यूचे भाकीत -> ठरलेला नकार (AI ला विचारत नाही)", _t.startswith("मृत्यू, आयुष्याची मर्यादा"))
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "माझा जन्म 12 जुलै 1977 रात्री 8:30, गाव - खेडेगाव", "agent": "jyotish"}).encode(),
+        headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    check("chat मधील जन्म-माहिती, ठिकाण अज्ञात -> अक्षांश-रेखांश मागतो",
+          "अक्षांश-रेखांश" in "".join(e.get("t", "") for e in ev))
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:

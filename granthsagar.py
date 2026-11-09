@@ -48,7 +48,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.9"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-10.1"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -1105,7 +1105,8 @@ async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.valu
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
-    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='padaccheda')pada=m;else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
+    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='padaccheda')pada=m;else if(m.type==='kundali'){const w=document.createElement('div');w.className='kchart';w.innerHTML=m.svg;
+     const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=m.text;w.appendChild(t);b.parentNode.insertBefore(w,b)}else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
     else if(m.type==='alert'){const a=document.createElement('div');a.className='alert';a.textContent=m.msg;chat.insertBefore(a,b)}
     else if(m.type==='error'){ans+='\n⚠️ '+m.msg;b.textContent=ans}}}
  }catch(e){b.textContent='⚠️ '+e}
@@ -1293,6 +1294,27 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
     agent_id: विषय-agent (agents.json); kundali: jyotish.compute_chart() चे उत्तर (ज्योतिष agent साठी)"""
     history = [m for m in history if m.get("role") in ("user", "assistant")][-6:]
     agent = agents.get(agent_id)
+    if kundali is None and agent["id"] in ("jyotish", "sarva"):
+        import jyotish                           # chat मध्येच जन्म-माहिती लिहिली असेल तर कुंडली आपोआप
+        b = jyotish.parse_birth(question)
+        if "date" in b and "time" in b:
+            if "place" not in b:
+                yield {"type": "token", "t": "जन्म तारीख आणि वेळ समजली, पण ठिकाण माझ्या यादीत सापडले नाही. "
+                       "वरच्या 🪐 जन्मकुंडली भागात 'इतर ठिकाण' निवडून अक्षांश-रेखांश द्या (Google Maps वर ठिकाणावर "
+                       "बोट ठेवल्यावर दिसतात), किंवा जवळच्या मोठ्या शहराचे नाव लिहा."}
+                yield {"type": "done"}
+                return
+            try:
+                kundali = kundali_from(b)
+                agent = agents.get("jyotish")
+                yield {"type": "kundali", "chart": kundali, "svg": jyotish.chart_svg(kundali),
+                       "text": jyotish.summary_text(kundali)}
+                rest = re.sub(r"[\d०-९:./,\-()]|नाव|जन्म\w*|वेळ|ठिकाण|जिल्हा|तारीख|pm|am|रात्री|सकाळी|दुपारी|"
+                              r"संध्याकाळी|पहाटे", " ", question, flags=re.I)
+                if not re.search(r"काय|कसे|कसा|कशी|कधी|सांगा|सांग|फल|फळ|\?", rest):
+                    question = "या कुंडलीचे ग्रंथानुसार मुख्य फल सांगा"
+            except Exception as e:
+                yield {"type": "error", "msg": f"कुंडली बनवता आली नाही: {e}"}
     if not agent.get("kundali"):
         kundali = None
     try:
@@ -1405,7 +1427,14 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
                     break
     except Exception as e:
         yield {"type": "error", "msg": f"Ollama शी संपर्क झाला नाही: {e}"}
+    if agent["id"] == "jyotish" and GEM_ADVICE.search(answer):
+        yield {"type": "token", "t": "\n\n> ⚠️ वरील रत्न/अंगठी/उपायांचा उल्लेख फक्त ग्रंथात काय लिहिले आहे ते आहे — "
+                                   "ग्रंथसागर असे काही विकत घेण्याचा किंवा धारण करण्याचा सल्ला देत नाही."}
     yield {"type": "done"}
+
+
+GEM_ADVICE = re.compile(r"(रत्न|अंगठी|मूंगा|मोती|पोवळ|पुष्कराज|नीलम|माणिक|पाचू|हिरा|गोमेद|लसण्या|यंत्र|ताईत|"
+                        r"रुद्राक्ष|दान|उपाय)[^।\n]{0,40}(घाला|घालावी|घालावा|जडव|धारण|करावे|करा|द्यावे|आवश्यक)")
 
 
 def is_looping(text, span=70):

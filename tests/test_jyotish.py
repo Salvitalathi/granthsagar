@@ -65,6 +65,16 @@ assert J.chart_svg(c).startswith("<svg") and "ल" in J.chart_svg(c)
 assert J.search_queries(c)
 print("दशा:", [(p["graha"], p["from"]) for p in per[:3]])
 
+b = J.parse_birth("नाव - मंगेश साळवी, जन्माची वेळ (12 जुलै, 1977, रात्री 8:30 pm) ठिकाण- अलिबाग, जिल्हा- रायगड")
+c = J.compute_chart(b["date"], b["time"], *J.CITIES[b["place"]])
+print("\nchat मधून:", b, "\n" + J.summary_text(c))
+print("दशा:", ", ".join(f"{p['graha']} {p['from']}–{p['to']}" for p in c["dasha"]["periods"]))
+lat, lon = J.CITIES["अलिबाग"]
+jd = swe.julday(1977, 7, 12, 20.5 - 5.5)
+asc = swe.houses_ex(jd, lat, lon, b"W", swe.FLG_SIDEREAL)[1][0]
+if abs(((asc - c["lagna"]["lon"]) + 180) % 360 - 180) > 5 / 3600:
+    fail.append("अलिबाग लग्न")
+
 if worst["ayan"] > 1 / 3600:
     fail.append(f"अयनांश फरक {worst['ayan']*3600:.1f}\"")
 if fail:
