@@ -1,0 +1,21 @@
+name: Fetch Vyakarana texts
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python scripts/fetch_vyakarana.py
+      - run: |
+          du -sh granth/vyakarana/* ; for d in granth/vyakarana/*/; do echo "== $d"; head -c 700 "$d/part_01.txt"; echo; done
+      - name: Commit to branch vyakarana-texts
+        run: |
+          git config user.name "granthsagar-bot"; git config user.email "actions@users.noreply.github.com"
+          git checkout -b vyakarana-texts
+          git add granth/vyakarana SOURCES_vyakarana.md
+          git commit -m "व्याकरण ग्रंथ (Wikisource, GRETIL)"
+          git push -f origin vyakarana-texts
