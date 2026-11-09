@@ -48,7 +48,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.8"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.9"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -333,7 +333,11 @@ STOP = set("""काय कोणते कोणता कोणती को�
 सांगावे होण्यासाठी कोणाला म्हणतात किती प्रमाणात घ्यावा घ्यावी माझ्या माझे माझी उपाय सांगितले पहिल्या
 कसा कशी कसे काही याचा यांचा मध्ये मधील नुसार साठी करावे करावा द्या आम्हाला मला बरा मंत्र व्यक्ती ग्रंथात
 श्लोक सूक्त अध्याय""".split())
+# प्रश्नातील सर्वसाधारण शब्द — हे संदर्भात नसले तरी 'सापडले नाही' अशी सूचना नको
+GENERIC_TERMS = set("""योग फल फळ लग्न लग्नाचे राशी राशीचे ग्रह भाव स्थान कुंडली कुंडलीचे जन्म नक्षत्र दशा
+म्हणजे समजाव समजावा उदाहरणासह सूत्र शब्द शब्दाचा पदच्छेद ग्रंथानुसार मुख्य आयुर्वेद उपचार रोग""".split())
 MATRA = "\u093e\u093f\u0940\u0941\u0942\u0943\u0944\u0947\u0948\u094b\u094c\u094d\u0902\u0903\u0901"
+GENERIC_BASE = {g.rstrip(MATRA) for g in GENERIC_TERMS}
 
 
 def mr_refs(text):
@@ -419,7 +423,13 @@ def sutra_lookup(question, agent=None):
         hit = rx.search(text)
         if hit and (agent is None or agents.owns(agent, name)):
             rank = next((i for i, p in enumerate(SUTRA_ORDER) if hit.group(0).startswith(p)), 9)
-            found.append((rank, name, text))
+            nxt = re.search(r"^\[", text[hit.end():], re.M)            # फक्त याच सूत्राचा भाग
+            seg = text[hit.start():hit.end() + nxt.start() if nxt else len(text)].strip()
+            if rank == 0:                                               # अष्टाध्यायी: आधीचे-नंतरचे एक सूत्र (अनुवृत्ती)
+                lines = text.splitlines()
+                i = next((k for k, l in enumerate(lines) if l.startswith(hit.group(0))), 0)
+                seg = "\n".join(lines[max(0, i - 1):i + 2])
+            found.append((rank, name, seg))
     found.sort(key=lambda x: x[0])
     out, seen = [], set()
     for rank, name, text in found:              # प्रत्येक ग्रंथातून पहिला तुकडा
@@ -1304,13 +1314,25 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
         yield {"type": "token", "t": EMERGENCY_ANSWER}
         yield {"type": "done"}
         return
+    if MODE == "granth" and agent.get("refuse") and \
+            any(re.search(p, question, re.I) for p in agent["refuse"]):
+        yield {"type": "token", "t": agent.get("refuse_answer", "हा प्रश्न ग्रंथसागर उत्तरत नाही.")}
+        yield {"type": "done"}
+        return
     if MODE == "granth" and _has(question, CAUTION):
         yield {"type": "alert", "msg": CAUTION_MSG}
     if hits:
         ctx = "\n\n".join(f"({agents.source_tag(name)})\n{mr_refs(text)}" for _, name, text in hits)
         user_msg = f"संदर्भ:\n{ctx}\n\n---\n"
+        missing = [alts[0] for alts in keywords(question)
+                   if alts[0] not in GENERIC_BASE and not any(any(k in t for k in alts) for _, _, t in hits)]
+        if missing and not kundali:
+            user_msg += (f"(सूचना: संदर्भात '{'/'.join(missing[:3])}' हा शब्द कुठेही नाही. म्हणून याबद्दल ग्रंथ काय सांगतो "
+                         "ते बनवू नकोस — 'उपलब्ध ग्रंथांमध्ये याचे वर्णन सापडले नाही' असे स्पष्ट सांग; संदर्भात "
+                         "जवळचे काही असेल तर तेवढेच सांग.)\n\n")
     else:
         user_msg = ""
+    pres = []
     if padaccheda.ready():                      # श्लोकांचा पदच्छेद (DCS — तपासलेले विश्लेषण)
         try:
             pres = padaccheda.analyze_text(question, 3)
@@ -1324,7 +1346,12 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
             yield {"type": "padaccheda", "items": pres, "credit": padaccheda.CREDIT}
     if agent.get("kosha"):
         if kosha.ready():
-            kctx, ksrc = kosha.context_for(question)
+            if pres:                      # श्लोक असेल तर: अव्यये सोडून मूळ शब्दांचे अर्थ
+                lem = [w[1] for it in pres for p in it["parts"] for w in p["words"]
+                       if not w[2].startswith(("अव्यय", "सर्वनाम")) and len(w[1]) >= 3]
+                kctx, ksrc = kosha.context_for(" ".join(dict.fromkeys(lem)))
+            else:
+                kctx, ksrc = kosha.context_for(question)
             if kctx:
                 user_msg += f"शब्दकोश (संस्कृत-संस्कृत, मूळ ग्रंथ):\n{kctx}\n\n---\n"
                 yield {"type": "sources", "sources": ksrc + [f"({kosha.CREDIT})"]}
@@ -1346,7 +1373,9 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
                [{"role": "user", "content": user_msg}]
     payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
                "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.2,
-                           "top_p": 0.9, "repeat_penalty": 1.05, "repeat_last_n": 64}}
+                           "top_p": 0.9, "repeat_penalty": 1.05, "repeat_last_n": 64,
+                           # उत्तरानंतर मॉडेल स्वतःच नवा 'प्रश्न:' / सूचना लिहू लागते — तिथे थांबवा
+                           "stop": ["\n---\nप्रश्न", "\nप्रश्न:", "(सूचना: उत्तर फक्त", "\n---\n"]}}
     if CHAT_MODEL.startswith(("qwen3", "deepseek-r1", "gemma4")):
         payload["think"] = False      # "विचार" मोड बंद — थेट उत्तर
     answer = ""

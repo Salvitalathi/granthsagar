@@ -345,13 +345,16 @@ shutil.rmtree(_sd, ignore_errors=True)
 _saved = gs.VECS
 gs.VECS = [("vyakarana/mahabhashya/part_01.txt", "[महाभाष्य 6.1.77]\nइकः यण् अचि इति …", None, 1.0),
            ("vyakarana/ashtadhyayi/part_01.txt", "[अष्टाध्यायी 6.1.76] छे च ।\n[अष्टाध्यायी 6.1.77] इको यणचि ।", None, 1.0),
-           ("vyakarana/kashika/part_02.txt", "[काशिका 6.1.77]\nइको यणचि ।\nइकः स्थाने यणादेशो भवति अचि परतः । दध्यत्र", None, 1.0),
-           ("vyakarana/laghusiddhantakaumudi/part_01.txt", "[लघुसिद्धान्तकौमुदी 15 = 6.1.77]\nइको यणचि ॥", None, 1.0),
-           ("vyakarana/kashika/part_02.txt", "[काशिका 6.1.78]\nएचोऽयवायावः ।", None, 1.0)]
+           ("vyakarana/kashika/part_02.txt", "[काशिका 6.1.77]\nइको यणचि ।\nइकः स्थाने यणादेशो भवति अचि परतः । दध्यत्र\n"
+            "[काशिका 6.1.78]\nएचोऽयवायावः ।", None, 1.0),
+           ("vyakarana/laghusiddhantakaumudi/part_01.txt", "[लघुसिद्धान्तकौमुदी 15 = 6.1.77]\nइको यणचि ॥", None, 1.0)]
 _r = gs.sutra_lookup("अष्टाध्यायी ६.१.७७ समजाव", agents.get("vyakarana"))
 _lab = [re.search(r"\[(अष्टाध्यायी|काशिका|लघुसिद्धान्तकौमुदी|महाभाष्य)[^\]]*6\.1\.77\]", t).group(1) for _, _, t in _r]
 check("सूत्र-शोध: ६.१.७७ -> सूत्र, काशिका, कौमुदी, महाभाष्य (क्रमाने)",
       _lab == ["अष्टाध्यायी", "काशिका", "लघुसिद्धान्तकौमुदी", "महाभाष्य"])
+check("सूत्र-शोध: अष्टाध्यायीतून फक्त ते सूत्र (± एक), इतर ४० सूत्रे नाहीत",
+      _r[0][2] == "[अष्टाध्यायी 6.1.76] छे च ।\n[अष्टाध्यायी 6.1.77] इको यणचि ।")
+check("सूत्र-शोध: काशिकेतून पुढचे सूत्र (6.1.78) नाही", "एचोऽयवायावः" not in "".join(t for _, _, t in _r))
 check("सूत्र-शोध: ज्योतिष प्रश्नात '1.1.1' -> नाही", gs.sutra_lookup("बृहज्जातक 1.1.1 चा अर्थ", agents.get("jyotish")) == [])
 gs.VECS = _saved
 import kosha
@@ -465,6 +468,11 @@ try:
     ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
     _pe = next((e for e in ev if e["type"] == "padaccheda"), None)
     check("उत्तरासोबत पदच्छेद-तक्ता", _pe and _pe["items"][0]["parts"][0]["words"][2][0] == "अधिकारः")
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "माझा मृत्यू कधी होईल?", "agent": "jyotish"}).encode(), headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    _t = "".join(e.get("t", "") for e in ev if e["type"] == "token")
+    check("ज्योतिष: मृत्यूचे भाकीत -> ठरलेला नकार (AI ला विचारत नाही)", _t.startswith("मृत्यू, आयुष्याची मर्यादा"))
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:
