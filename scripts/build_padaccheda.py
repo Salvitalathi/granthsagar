@@ -74,7 +74,7 @@ def main():
             print(f"{v:6d} files  {k}")
         print(f"एकूण {sum(sizes.values())} files, {len(sizes)} ग्रंथ")
         return
-    names = [a for a in sys.argv[1:] if not a.startswith("-")] or DEFAULT
+    names = [a for a in sys.argv[1:] if not a.startswith("-") and a != "default"] or DEFAULT
     names = [n for n in names if n in sizes] + [n for n in names if n not in sizes and print("⚠️ नाही:", n)]
     git("sparse-checkout", "set", *[FILES + n for n in names], cwd=CACHE)
     os.makedirs(OUT, exist_ok=True)
