@@ -13,9 +13,12 @@ CACHE = os.path.join(HERE, ".cache", "dcs")
 REPO = "https://github.com/OliverHellwig/sanskrit"
 FILES = "dcs/data/conllu/files/"
 OUT = os.path.join(HERE, "data", "padaccheda")
-DEFAULT = ["Bhagavadgītā", "Atharvaveda (Śaunaka)", "Carakasaṃhitā", "Suśrutasaṃhitā", "Aṣṭāṅgahṛdayasaṃhitā",
-           "Bhāgavatapurāṇa", "Viṣṇupurāṇa", "Agnipurāṇa", "Garuḍapurāṇa", "Śivapurāṇa", "Matsyapurāṇa",
-           "Bṛhatsaṃhitā", "Amarakośa", "Rāmāyaṇa", "Manusmṛti", "Yājñavalkyasmṛti", "Kathāsaritsāgara"]
+DEFAULT = ["Mahābhārata", "Rāmāyaṇa", "Harivaṃśa", "Atharvaveda (Śaunaka)", "Ṛgveda", "Carakasaṃhitā",
+           "Suśrutasaṃhitā", "Aṣṭāṅgahṛdayasaṃhitā", "Bhāgavatapurāṇa", "Viṣṇupurāṇa", "Agnipurāṇa", "Garuḍapurāṇa",
+           "Matsyapurāṇa", "Liṅgapurāṇa", "Kūrmapurāṇa", "Skandapurāṇa", "Manusmṛti", "Aṣṭādhyāyī", "Kāśikāvṛtti",
+           "Nirukta", "Rājanighaṇṭu", "Chāndogyopaniṣad", "Bṛhadāraṇyakopaniṣad", "Taittirīyopaniṣad",
+           "Muṇḍakopaniṣad", "Śvetāśvataropaniṣad", "Aitareyopaniṣad", "Yogasūtrabhāṣya", "Arthaśāstra",
+           "Kauśikasūtra", "Bṛhatsaṃhitā", "Amarakośa", "Rasaratnasamuccaya", "Rasārṇava"]
 
 
 def git(*args, cwd=None):
