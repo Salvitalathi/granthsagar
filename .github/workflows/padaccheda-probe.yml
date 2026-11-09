@@ -1,0 +1,15 @@
+name: Padaccheda probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: { py: ["3.12", "3.9"] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.py }}" }
+      - run: pip install sanskrit_parser 2>&1 | tail -3; pip show sanskrit_parser | head -3; du -sh $(python -c "import site;print(site.getsitepackages()[0])")
+      - run: python scripts/padaccheda_probe.py
+      - run: du -sh ~/.sanskrit_parser 2>/dev/null; ls -la ~/.sanskrit_parser 2>/dev/null | head
