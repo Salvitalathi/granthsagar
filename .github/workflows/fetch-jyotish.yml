@@ -1,0 +1,21 @@
+name: Fetch Jyotish texts
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python scripts/fetch_jyotish.py
+      - run: |
+          du -sh granth/jyotish/* ; for d in granth/jyotish/*/; do echo "== $d"; head -c 700 "$d/part_01.txt"; echo; done
+      - name: Commit to branch jyotish-texts
+        run: |
+          git config user.name "granthsagar-bot"; git config user.email "actions@users.noreply.github.com"
+          git checkout -b jyotish-texts
+          git add granth/jyotish SOURCES_jyotish.md
+          git commit -m "ज्योतिष ग्रंथ (Wikisource, GRETIL, archive.org)"
+          git push -f origin jyotish-texts
