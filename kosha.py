@@ -85,9 +85,9 @@ def body_to_deva(b):
         if re.fullmatch(r"[a-zA-Z~']+[0-9]?", tok) and not re.fullmatch(r"[A-Z][a-z]+", tok):
             m = re.fullmatch(r"([a-zA-Z~']+)0", tok)        # pu0 -> पुं० (संक्षेप)
             out.append(slp1_to_deva(m.group(1)) + "०" if m else slp1_to_deva(tok))
-        elif re.fullmatch(r"[“\"(]?[a-zA-Z~']+[”\").,;:!?]*", tok):
-            pre = re.match(r"^[“\"(]?", tok).group(0)
-            post = re.search(r"[”\").,;:!?]*$", tok).group(0)
+        elif re.fullmatch(r"[“‘\"(]?[a-zA-Z~']+[”’\").,;:!?]*", tok):
+            pre = re.match(r"^[“‘\"(]?", tok).group(0)
+            post = re.search(r"[”’\").,;:!?]*$", tok).group(0)
             core = tok[len(pre):len(tok) - len(post)]
             out.append(pre + slp1_to_deva(core) + post.replace(".", " ।"))
         else:

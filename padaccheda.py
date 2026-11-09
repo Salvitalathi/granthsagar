@@ -22,6 +22,7 @@ from kosha import deva_to_slp1
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("GS_PADA_DATA", os.path.join(HERE, "data", "padaccheda"))
 DB = os.environ.get("GS_PADA_DB", os.path.join(HERE, "tools", "padaccheda.db"))
+SKIP_GRANTH = {"Aṣṭādhyāyī"}
 CREDIT = "Digital Corpus of Sanskrit (O. Hellwig), CC BY 4.0"
 STATUS = {"state": "", "msg": ""}
 _LOCK = threading.Lock()
@@ -223,6 +224,8 @@ def analyze_line(line, con=None):
             return []
         out = []
         for pos, (_id, g, r, t, k, w) in sorted(chosen):
+            if g in SKIP_GRANTH:                        # सूत्रांचे DCS विश्लेषण प्रत्याहार तोडते (इ कः य ण्…) — दिशाभूल
+                continue
             ws = json.loads(zlib.decompress(w).decode("utf-8"))
             words = [(to_deva(f), to_deva(lem), grammar_mr(up, ft)) for f, lem, up, ft in ws]
             out.append({"g": g, "r": r, "t": to_deva(t), "words": words})

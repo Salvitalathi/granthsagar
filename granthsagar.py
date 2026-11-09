@@ -1336,6 +1336,12 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
     if padaccheda.ready():                      # श्लोकांचा पदच्छेद (DCS — तपासलेले विश्लेषण)
         try:
             pres = padaccheda.analyze_text(question, 3)
+            if pres and not direct_lookup(question) and not sutra_lookup(question, agent):
+                # प्रश्नातच श्लोक आहे: शोधलेले इतर तुकडे असंबंधित असतात (उदा. भलतेच सूत्र) — ते काढा
+                hits = []
+                user_msg = ("(सूचना: हा प्रश्न खालील श्लोकाच्या अर्थाबद्दल आहे. 'सूत्र/नियम' रचना वापरू नकोस, कोणतेही "
+                            "सूत्र उद्धृत करू नकोस. रचना: 1. अन्वय (शब्दांचा गद्य क्रम) 2. प्रत्येक मुख्य शब्दाचा अर्थ "
+                            "(कोश दिला असेल तर त्यावरून) 3. मराठी भावार्थ.)\n\n")
             if not pres and hits:
                 pres = padaccheda.analyze_text("\n".join(t for _, _, t in hits[:2]), 3)
         except Exception:
