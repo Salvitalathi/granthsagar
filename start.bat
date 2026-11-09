@@ -8,7 +8,7 @@ where ollama >nul 2>nul || (echo [X] Ollama nahi. https://ollama.com varun insta
 echo.
 echo ===== [1/3] PDF sathi sadhane =====
 echo pypdfium2, pillow, numpy install/tapasat aahe...
-python -m pip install --disable-pip-version-check -q pypdfium2 pillow numpy
+python -m pip install --disable-pip-version-check -q pypdfium2 pillow numpy skyfield
 python granthsagar.py --check-setup
 if %errorlevel%==0 goto tools_ok
 set "TESS=C:\Program Files\Tesseract-OCR\tesseract.exe"

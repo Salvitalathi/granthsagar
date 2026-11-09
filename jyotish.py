@@ -88,7 +88,7 @@ def lahiri_ayanamsa(t):
     return LAHIRI_J2000 + (5028.796195 * T + 1.1054348 * T * T) / 3600.0
 
 
-LAHIRI_J2000 = 23.85306      # 2000-01-01 12:00 TT ला ~23°51'11" (GitHub वर Swiss Ephemeris शी पडताळलेले)
+LAHIRI_J2000 = 23.857092     # 2000-01-01 12:00 TT ला मध्यम लाहिरी अयनांश (Swiss Ephemeris शी पडताळलेले)
 
 
 def mean_rahu(t):
@@ -98,19 +98,28 @@ def mean_rahu(t):
     return om % 360.0
 
 
-def obliquity(t):
+def nutation(t):
+    """(Δψ, Δε) अंशांत — IAU 2000"""
+    from skyfield import nutationlib
+    f = getattr(nutationlib, "iau2000b_radians", None) or nutationlib.iau2000a_radians
+    dpsi, deps = f(t)
+    return math.degrees(dpsi), math.degrees(deps)
+
+
+def obliquity(t, true=True):
     T = _T(t)
-    return 23.0 + 26.0 / 60 + (21.448 - 46.8150 * T - 0.00059 * T * T + 0.001813 * T ** 3) / 3600.0
+    eps = 23.0 + 26.0 / 60 + (21.448 - 46.8150 * T - 0.00059 * T * T + 0.001813 * T ** 3) / 3600.0
+    return eps + (nutation(t)[1] if true else 0.0)
 
 
 def ascendant(t, lat, lon):
-    """सायन लग्न (अंश)"""
+    """सायन लग्न (अंश) — मध्यम विषुवापासून (ग्रहांप्रमाणे)"""
     ramc = math.radians((t.gast * 15.0 + lon) % 360.0)
     eps = math.radians(obliquity(t))
     phi = math.radians(lat)
     asc = math.degrees(math.atan2(math.cos(ramc),
                                   -(math.sin(ramc) * math.cos(eps) + math.tan(phi) * math.sin(eps))))
-    return asc % 360.0
+    return (asc - nutation(t)[0]) % 360.0
 
 
 def tropical_longitudes(t):
@@ -118,9 +127,10 @@ def tropical_longitudes(t):
     ts, eph = _load()
     earth = eph["earth"]
     out = {}
+    dpsi = nutation(t)[0]        # मध्यम विषुवापासून मोजा: अयनांश मध्यम आहे (Swiss Ephemeris/बहुतेक पंचांगांप्रमाणे)
     for g, key in SKYFIELD_KEY.items():
         lat_, lon_, _ = earth.at(t).observe(eph[key]).apparent().frame_latlon(ecliptic_frame)
-        out[g] = lon_.degrees % 360.0
+        out[g] = (lon_.degrees - dpsi) % 360.0
     out["राहू"] = mean_rahu(t)
     out["केतू"] = (out["राहू"] + 180.0) % 360.0
     return out
@@ -139,7 +149,8 @@ def compute_chart(date, time, lat, lon, tz=5.5, name=""):
     ts, _ = _load()
     local = _dt.datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
     utc = local - _dt.timedelta(hours=tz)
-    t = ts.utc(utc.year, utc.month, utc.day, utc.hour, utc.minute, utc.second)
+    # जन्मवेळ = नागरी वेळ ≈ UT1 (1972 पूर्वी UTC चे leap-second नियम लागू नव्हते)
+    t = ts.ut1(utc.year, utc.month, utc.day, utc.hour, utc.minute, utc.second)
     ayan = lahiri_ayanamsa(t)
     trop = tropical_longitudes(t)
     t2 = ts.tt_jd(t.tt + 0.5)

@@ -218,6 +218,44 @@ if pdf_ocr.check_setup()[0]:
           and os.path.exists(os.path.join(gs.PDF_INBOX, "वायु पुराण.pdf")))
     shutil.rmtree(_wd, ignore_errors=True)
 
+# ---- 2f. विषयवार agents ----
+import agents
+_j, _s = agents.get("jyotish"), agents.get("sarva")
+check("agents: ज्योतिष फाइल्स ओळखल्या (Windows \\ सह)", agents.owns(_j, "jyotish\\bphs\\part_01.txt")
+      and agents.owns(_j, "pdf/ज्योतिष/सूर्यसिद्धांत/part_01.txt") and not agents.owns(_j, "sushruta/part_01.txt")
+      and not agents.owns(_j, "jyotishX/a.txt") and agents.owns(_s, "sushruta/part_01.txt"))
+check("agents: अज्ञात id -> सर्व ग्रंथ", agents.get("नाही")["id"] == "sarva")
+_jp = agents.prompt(_j, gs.GRANTH_PROMPT)
+check("agents: ज्योतिष prompt मध्ये सुरक्षा नियम", "मृत्यू" in _jp and "रत्न" in _jp and "ग्रंथानुसार" in _jp)
+check("agents: आधुनिक/मूळ स्रोत", agents.is_modern("pdf\\x\\part_01.txt") and not agents.is_modern("charaka/a.txt"))
+_saved = (gs.VECS, gs.MAT, gs.embed)
+gs.VECS = [("charaka/a.txt", "अपचन आहार", None, 1.0), ("jyotish/bj/part_01.txt", "मेष लग्न फल", None, 1.0),
+           ("pdf/ज्योतिष/x/part_01.txt", "गजकेसरी योग", None, 1.0)]
+gs.MAT = None if gs.np is None else gs.np.array([[1, 0, 0], [0.9, 0.1, 0], [0.8, 0, 0.2]], dtype="float32")
+if gs.MAT is not None:
+    gs.MAT /= gs.np.linalg.norm(gs.MAT, axis=1, keepdims=True)
+gs.VECS = [(n, t, [1, 0, 0] if gs.MAT is None else None, 1.0) for n, t, _, _ in gs.VECS]
+gs.embed = lambda texts, progress=None: [[1.0, 0.0, 0.0] for _ in texts]
+_h = gs.search("आहार", agents.get("jyotish"))
+check("agents: ज्योतिष agent फक्त ज्योतिष ग्रंथांतून शोधतो", _h and all(n.replace("\\", "/").startswith(("jyotish/", "pdf/ज्योतिष/")) for _, n, _ in _h))
+check("agents: सर्व ग्रंथ — पहिला तुकडा चरक", gs.search("आहार")[0][1] == "charaka/a.txt")
+_m = gs.search_multi(["अ", "ब"], agents.get("jyotish"))
+check("agents: अनेक प्रश्नांचा शोध, पुनरावृत्ती नाही", len(_m) == len({t for _, _, t in _m}) >= 2)
+gs.VECS, gs.MAT, gs.embed = _saved
+_old = (gs.PDF_INBOX, gs.PDF_OUT)
+_sd = tempfile.mkdtemp()
+gs.PDF_INBOX, gs.PDF_OUT = os.path.join(_sd, "pdf_inbox"), os.path.join(_sd, "granth", "pdf")
+check("विषय-folder: pdf_inbox/ज्योतिष/… -> ज्योतिष", gs.subject_of(os.path.join(gs.PDF_INBOX, "ज्योतिष", "a", "b.pdf")) == "ज्योतिष"
+      and gs.subject_of(os.path.join(gs.PDF_INBOX, "b.pdf")) == "" and gs.subject_of(os.path.join(gs.PDF_INBOX, "इतर", "b.pdf")) == "")
+import io
+_p = gs.save_upload(io.BytesIO(b"%PDF-1.4 x"), 10, "सूर्य.pdf", "सूर्यसिद्धांत", "auto", "ज्योतिष")
+check("upload: विषय निवडल्यावर pdf_inbox/ज्योतिष मध्ये", os.path.dirname(_p) == os.path.join(gs.PDF_INBOX, "ज्योतिष"))
+os.makedirs(os.path.join(gs.PDF_INBOX, "done"), exist_ok=True)
+gs.move_aside(_p, "done")
+check("done नंतरही pdf_inbox/ज्योतिष folder राहतो", os.path.isdir(os.path.join(gs.PDF_INBOX, "ज्योतिष")))
+gs.PDF_INBOX, gs.PDF_OUT = _old
+shutil.rmtree(_sd, ignore_errors=True)
+
 # ---- 3. App + बनावट Ollama ----
 docs = os.path.join(tmp, "granth")
 os.makedirs(docs)
@@ -252,6 +290,18 @@ try:
     check("आपत्कालीन: AI उपाय नाही, ठरलेले उत्तर", "".join(e.get("t", "") for e in ev) == gs.EMERGENCY_ANSWER)
     ev = ask("गरोदर स्त्रीने अपचनात काय आहार घ्यावा?")
     check("सावधगिरी: alert + उत्तर", any(e["type"] == "alert" for e in ev) and any(e["type"] == "token" for e in ev))
+    ag = json.loads(urllib.request.urlopen("http://127.0.0.1:8799/agents").read())
+    check("/agents: ज्योतिष agent + शहरे", any(a["id"] == "jyotish" and a["kundali"] for a in ag["agents"])
+          and "पुणे" in ag["cities"])
+    req = urllib.request.Request("http://127.0.0.1:8799/ask", data=json.dumps(
+        {"q": "अपचनात कोणता आहार घ्यावा?", "agent": "jyotish"}).encode(), headers={"Content-Type": "application/json"})
+    ev = [json.loads(l) for l in urllib.request.urlopen(req, timeout=20).read().decode().splitlines() if l]
+    check("ज्योतिष agent ला आयुर्वेद फाइल्स दिसत नाहीत",
+          any(e["type"] == "sources" for e in ev) and not any(e.get("sources") for e in ev))
+    req = urllib.request.Request("http://127.0.0.1:8799/kundali", data=json.dumps(
+        {"date": "1990-13-45", "time": "6:30", "place": "पुणे"}).encode(), headers={"Content-Type": "application/json"})
+    kr = json.loads(urllib.request.urlopen(req, timeout=20).read())
+    check("/kundali: चुकीची तारीख -> नम्र error, crash नाही", kr["ok"] is False and kr["msg"])
     page = urllib.request.urlopen("http://127.0.0.1:8799/").read().decode()
     check("chat पान", "ग्रंथसागर" in page)
 finally:

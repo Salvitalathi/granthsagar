@@ -14,6 +14,7 @@
 """
 import json, os, re, sys, subprocess, math, time, hashlib, shutil, threading, webbrowser, zipfile, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+import agents
 
 # ===================== सेटिंग्ज (हवे तसे बदला) =====================
 # MODE = "granth" -> ग्रंथांचा अर्थ मराठीत समजावणे + आरोग्य सुरक्षितता; "general" -> साधा मदतनीस
@@ -45,7 +46,7 @@ EMBED_MODEL = os.environ.get("GS_EMBED_MODEL", "bge-m3")
 OLLAMA = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 if not OLLAMA.startswith("http"):
     OLLAMA = "http://" + OLLAMA
-VERSION = "2026-11-09.3"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
+VERSION = "2026-11-09.4"      # सुरू होताना दिसते — कोणता code चालू आहे ते ओळखण्यासाठी
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.environ.get("GS_DOCS", os.path.join(HERE, "granth"))
 INDEX_FILE = os.path.join(HERE, "index.json")
@@ -380,12 +381,30 @@ def keywords(question):
     return keys
 
 
-def search(query):
+_MASKS = {}
+
+
+def agent_mask(agent):
+    """या agent च्या फाइल्समधील तुकडे (numpy bool). None = सर्व."""
+    if agent is None or not agent["folders"]:
+        return None
+    key = (agent["id"], len(VECS), id(VECS))
+    if key not in _MASKS:
+        _MASKS.clear()
+        _MASKS[key] = np.array([agents.owns(agent, n) for n, _, _, _ in VECS], dtype=bool) \
+            if np is not None else [agents.owns(agent, n) for n, _, _, _ in VECS]
+    return _MASKS[key]
+
+
+def search(query, agent=None, qvec=None, top_k=TOP_K):
     if not VECS:
         return []
     direct = direct_lookup(query)
-    q = embed([query])[0]
+    if agent is not None:
+        direct = [h for h in direct if agents.owns(agent, h[1])]
+    q = qvec if qvec is not None else embed([query])[0]
     keys = keywords(query)
+    mask = agent_mask(agent)
     if MAT is not None:
         qv = np.array(q, dtype=np.float32); qv /= max(float(np.linalg.norm(qv)), 1e-8)
         sims = MAT @ qv
@@ -394,22 +413,38 @@ def search(query):
                               for _, t, _, _ in VECS],
                              dtype=np.float32)
             sims = sims + boost
-        top = np.argsort(-sims)[:TOP_K]
+        if mask is not None:
+            sims = np.where(mask, sims, -1.0)
+        top = np.argsort(-sims)[:top_k]
         hits = [(float(sims[i]), VECS[i][0], VECS[i][1]) for i in top if sims[i] >= MIN_SCORE]
         if direct:   # नेमका श्लोक/अध्याय सापडला — तोच द्या, इतर सूक्ते गोंधळ घालतात
             return direct
         return hits
     qn = math.sqrt(sum(x * x for x in q)) or 1.0
     scored = []
-    for name, text, vec, n in VECS:
+    for i, (name, text, vec, n) in enumerate(VECS):
+        if mask is not None and not mask[i]:
+            continue
         s = sum(a * b for a, b in zip(q, vec)) / (qn * n) + min(0.12, 0.04 * sum(any(k in text for k in alts) for alts in keys))
         scored.append((s, name, text))
     scored.sort(reverse=True)
-    return direct or [x for x in scored[:TOP_K] if x[0] >= MIN_SCORE]
+    return direct or [x for x in scored[:top_k] if x[0] >= MIN_SCORE]
 
 
+def search_multi(queries, agent=None, total=TOP_K + 1):
+    """अनेक प्रश्न (उदा. कुंडलीतील ग्रह-स्थिती) — एकाच embedding call मध्ये, प्रत्येकाचे सर्वोत्तम तुकडे"""
+    if not VECS or not queries:
+        return []
+    vecs = embed(queries)
+    seen, out = set(), []
+    per = [search(q, agent, qvec=v, top_k=2) for q, v in zip(queries, vecs)]
+    for rank in range(2):                       # आधी प्रत्येक प्रश्नाचा पहिला तुकडा, मग दुसरा
+        for hits in per:
+            if rank < len(hits) and hits[rank][2] not in seen and len(out) < total:
+                seen.add(hits[rank][2]); out.append(hits[rank])
+    return out
 
-# ===================== Folder तपासणी + पार्श्वभूमीत वाचन =====================
+
 INDEX_STATUS = {"running": False, "msg": "", "again": False}
 OCR_STATUS = {"running": False, "msg": "", "error": "", "done": []}
 OCR_LOCK = threading.Lock()
@@ -496,6 +531,20 @@ def _zip_marker(z):
     return os.path.join(PDF_INBOX, "done", f".{os.path.basename(z)}.{st.st_size}.extracted")
 
 
+def subject_of(path):
+    """pdf_inbox/ज्योतिष/… -> 'ज्योतिष' (agents.json मधील inbox). नाहीतर ''"""
+    try:
+        rel = os.path.relpath(path, PDF_INBOX)
+    except ValueError:
+        return ""
+    first = rel.replace("\\", "/").split("/")[0]
+    return first if first in agents.inbox_subjects() and first != rel else ""
+
+
+def subject_out(subject):
+    return os.path.join(PDF_OUT, subject) if subject else PDF_OUT
+
+
 def pending_zips():
     out = []
     for base in (PDF_INBOX, DOCS_DIR):
@@ -526,16 +575,17 @@ def unpack_zips(log=print):
                 continue
             stem = os.path.splitext(os.path.basename(z))[0]
             safe = re.sub(r'[\\/:*?"<>|]+', "_", stem).strip(" .") or "zip"
+            subj = subject_of(z)                      # pdf_inbox/ज्योतिष/x.zip -> pdf_inbox/ज्योतिष/x/
             log(f"📦 {os.path.basename(z)} extract करत आहे…")
             try:
-                files = pdf_ocr.extract_zip(z, os.path.join(PDF_INBOX, safe))
+                files = pdf_ocr.extract_zip(z, os.path.join(PDF_INBOX, subj, safe))
             except Exception as e:
                 log(f"⚠️ {os.path.basename(z)}: zip उघडता आली नाही ({e})")
                 files = None
             if files is not None:
                 for f in files:
                     if f.lower().endswith(TEXT_EXT):
-                        d = os.path.join(PDF_OUT, safe)
+                        d = os.path.join(subject_out(subj), safe)
                         os.makedirs(d, exist_ok=True)
                         shutil.move(f, os.path.join(d, os.path.basename(f))); texts += 1
                 n_pdf = sum(f.lower().endswith(".pdf") for f in files)
@@ -618,7 +668,9 @@ def move_aside(pdf, sub, note=None):
         with open(target + ".कारण.txt", "w", encoding="utf-8") as f:
             f.write(note + "\n")
     parent = os.path.dirname(pdf)                       # zip मधून आलेले रिकामे folders साफ
-    while os.path.abspath(parent).startswith(os.path.abspath(PDF_INBOX) + os.sep):
+    keep = {os.path.abspath(os.path.join(PDF_INBOX, x)) for x in agents.inbox_subjects()}
+    while os.path.abspath(parent).startswith(os.path.abspath(PDF_INBOX) + os.sep) \
+            and os.path.abspath(parent) not in keep:
         try:
             os.rmdir(parent)
         except OSError:
@@ -667,7 +719,10 @@ def start_ocr():
                 name = meta.get("name") or os.path.splitext(os.path.basename(pdf))[0].replace("_", " ")
                 try:
                     with OCR_LOCK:
-                        pdf_ocr.process_pdf(pdf, name, PDF_OUT, lang=meta.get("lang", "auto"), progress=log)
+                        subj = meta.get("subject") if meta.get("subject") in agents.inbox_subjects() \
+                            else subject_of(pdf)
+                        pdf_ocr.process_pdf(pdf, name, subject_out(subj), lang=meta.get("lang", "auto"),
+                                            progress=log)
                 except pdf_ocr.OCRSetupError:
                     raise                               # Tesseract/भाषा नाही — फाइल खराब नाही
                 except Exception as e:
@@ -702,15 +757,16 @@ def start_ocr():
     return True
 
 
-def save_upload(rfile, length, filename, name, lang):
-    os.makedirs(PDF_INBOX, exist_ok=True)
+def save_upload(rfile, length, filename, name, lang, subject=""):
+    base = os.path.join(PDF_INBOX, subject) if subject in agents.inbox_subjects() else PDF_INBOX
+    os.makedirs(base, exist_ok=True)
     safe = re.sub(r'[\\/:*?"<>|]+', "_", os.path.basename(filename or "granth.pdf"))
     is_zip = safe.lower().endswith(".zip")
     if not is_zip and not safe.lower().endswith(".pdf"):
         safe += ".pdf"
-    path = os.path.join(PDF_INBOX, safe)
+    path = os.path.join(base, safe)
     if os.path.exists(path):
-        path = os.path.join(PDF_INBOX, f"{int(time.time())}_{safe}")
+        path = os.path.join(base, f"{int(time.time())}_{safe}")
     left = length
     with open(path + ".part", "wb") as f:
         while left > 0:
@@ -745,6 +801,26 @@ def watch_folders():
             pass
 
 
+# ===================== कुंडली =====================
+def kundali_from(b):
+    """browser मधून आलेली जन्म-माहिती -> कुंडली (गणित नेहमी इथेच, browser वर विश्वास नाही)"""
+    import jyotish
+    date, tm = str(b.get("date", "")), str(b.get("time", ""))
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or not re.fullmatch(r"\d{1,2}:\d{2}", tm):
+        raise ValueError("जन्म तारीख (YYYY-MM-DD) आणि वेळ (HH:MM) द्या")
+    if b.get("place") in jyotish.CITIES:
+        lat, lon = jyotish.CITIES[b["place"]]
+    else:
+        lat, lon = float(b.get("lat")), float(b.get("lon"))
+    if not (-66 <= lat <= 66 and -180 <= lon <= 180):
+        raise ValueError("अक्षांश -66 ते 66 आणि रेखांश -180 ते 180 असावा")
+    tz = float(b.get("tz", 5.5))
+    y = int(date[:4])
+    if not 1900 <= y <= 2050:
+        raise ValueError("वर्ष 1900 ते 2050 दरम्यान असावे (DE421 ची मर्यादा)")
+    return jyotish.compute_chart(date, tm, lat, lon, tz=tz, name=str(b.get("name", ""))[:60])
+
+
 # ===================== Web chat =====================
 PAGE = r"""<!DOCTYPE html><html lang="mr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -765,6 +841,15 @@ button.ghost{background:transparent;border:1px solid #fff8}
 #pn{flex:1;min-width:220px}#pmsg{margin-top:6px;color:#555;white-space:pre-wrap}
 .sys{align-self:center;font-size:14px;color:#555;background:#e8e2d4;border-radius:8px;padding:6px 12px}
 form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
+#agentBar{display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;background:#e8e2d4;border-bottom:1px solid #d6ccb6}
+#agentBar button{background:#fff;color:#1f4e5f;border:1px solid #c9bda3;padding:6px 12px}
+#agentBar button.on{background:#1f4e5f;color:#fff;border-color:#1f4e5f}
+#agentAbout{font-size:13px;color:#555;align-self:center}
+#kPanel{background:#f3f0fb;border-bottom:1px solid #d7cff0;padding:10px 16px;font-size:14px}
+#kPanel input,#kPanel select{font:inherit;padding:6px;border:1px solid #bbb;border-radius:6px}
+#kPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
+.kchart{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.kchart svg{max-width:100%;height:auto}
+.chip{display:inline-block;background:#fff;border:1px solid #c9bda3;border-radius:14px;padding:3px 10px;margin:3px;cursor:pointer;font-size:13px}
 textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
 </style></head><body>
 <header><h1>🪔 ग्रंथसागर <small id="st"></small> <small style="opacity:.5">v__VERSION__</small></h1>
@@ -772,10 +857,23 @@ textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;bord
 <button class="ghost" onclick="openInbox()">📂 PDF folder उघडा</button>
 <button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
 <button class="ghost" onclick="hist=[];chat.innerHTML=''">🧹 नवीन</button></header>
+<div id="agentBar"></div>
+<div id="kPanel" hidden>
+ <b>🪐 जन्मकुंडली</b> — गणित तुमच्या संगणकावरच होते (लाहिरी अयनांश, राशी-भाव पद्धत). मग प्रश्नांची उत्तरे या कुंडलीनुसार ग्रंथांतून.
+ <div class="row"><input id="kName" placeholder="नाव (ऐच्छिक)" style="width:140px">
+ <input id="kDate" type="date" min="1900-01-01" max="2050-12-31"> <input id="kTime" type="time">
+ <select id="kPlace" onchange="kLL.hidden=this.value!=='__other'"></select>
+ <span id="kLL" hidden><input id="kLat" placeholder="अक्षांश उदा. 18.52" style="width:120px"> <input id="kLon" placeholder="रेखांश उदा. 73.86" style="width:120px"></span>
+ <label title="भारत = 5.5">UTC+<input id="kTz" value="5.5" style="width:50px"></label>
+ <button onclick="makeKundali()">कुंडली बनवा</button>
+ <button id="kClear" class="ghost" style="color:#553;border-color:#9a8" hidden onclick="clearKundali()">✖ कुंडली काढा</button></div>
+ <div id="kmsg" style="margin-top:6px;color:#555"></div>
+</div>
 <div id="pdfPanel" hidden>
  <b>📄 PDF ग्रंथ जोडा</b> — scan केलेली किंवा कोणत्याही font मधील PDF, किंवा PDF असलेली zip चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.
  <div class="row"><input type="file" id="pf" accept=".pdf,.zip,application/pdf,application/zip" multiple onchange="pfName()">
  <input id="pn" placeholder="ग्रंथाचे नाव (उदा. चरक संहिता हिंदी टीका भाग 1)">
+ <select id="ps" title="विषय — त्या agent ला हा ग्रंथ मिळेल"><option value="">विषय: सामान्य</option></select>
  <select id="pl"><option value="auto">भाषा आपोआप ओळखा</option><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select>
  <button onclick="uploadPdfs()">अपलोड</button></div>
  <div id="pmsg"></div>
@@ -790,7 +888,7 @@ function add(cls,t){const d=document.createElement('div');d.className='msg '+cls
 const pdfPanel=document.getElementById('pdfPanel'),pf=document.getElementById('pf'),pn=document.getElementById('pn'),pl=document.getElementById('pl'),pmsg=document.getElementById('pmsg');
 function pfName(){if(pf.files.length===1){pn.value=pf.files[0].name.replace(/\.(pdf|zip)$/i,'').replace(/[_-]+/g,' ')}else if(pf.files.length>1){pn.value='';pn.placeholder='अनेक फाइल्स — प्रत्येकीचे नाव फाइल-नावावरून'}}
 function upOne(file,name){return new Promise(res=>{const x=new XMLHttpRequest();
- x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value);
+ x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value+'&subject='+encodeURIComponent(document.getElementById('ps').value));
  x.upload.onprogress=e=>{if(e.lengthComputable)pmsg.textContent=`⬆ ${file.name}: ${Math.round(e.loaded*100/e.total)}%`};
  x.onload=()=>{try{res(JSON.parse(x.responseText).msg)}catch(e){res('⚠️ '+x.responseText)}};x.onerror=()=>res('⚠️ अपलोड अयशस्वी');x.send(file)})}
 async function uploadPdfs(){if(!pf.files.length){pmsg.textContent='आधी PDF निवडा.';return}
@@ -813,7 +911,7 @@ async function reindex(){const s=add('sys','फाइल्स वाचत आ�
 q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
  const b=add('bot','…');let ans='',srcs=[];
- try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist.slice(-6)})});
+ try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist.slice(-6),agent:agent,birth:(AG[agent]&&AG[agent].kundali)?birth:null})});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
@@ -823,6 +921,36 @@ async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.valu
  }catch(e){b.textContent='⚠️ '+e}
  if(srcs.length){const s=document.createElement('div');s.className='src';s.textContent='📄 संदर्भ: '+srcs.join(', ');b.appendChild(s)}
  hist.push({role:'user',content:t},{role:'assistant',content:ans});busy=false;q.focus()}
+let agent=localStorage.getItem('gs_agent')||'sarva',AG={},birth=null;
+const kPanel=document.getElementById('kPanel'),kmsg=document.getElementById('kmsg');
+async function loadAgents(){try{const r=await (await fetch('/agents')).json();const bar=document.getElementById('agentBar');
+ r.agents.forEach(a=>{AG[a.id]=a;const b=document.createElement('button');b.textContent=a.icon+' '+a.name;b.dataset.id=a.id;b.onclick=()=>pickAgent(a.id);bar.appendChild(b);
+  if(a.inbox){const o=document.createElement('option');o.value=a.inbox;o.textContent='विषय: '+a.name;document.getElementById('ps').appendChild(o)}});
+ const ab=document.createElement('span');ab.id='agentAbout';bar.appendChild(ab);
+ const kp=document.getElementById('kPlace');r.cities.forEach(c=>{const o=document.createElement('option');o.textContent=c;kp.appendChild(o)});
+ const o=document.createElement('option');o.value='__other';o.textContent='इतर ठिकाण (अक्षांश/रेखांश)';kp.appendChild(o);
+ if(!AG[agent])agent='sarva';pickAgent(agent,true)}catch(e){}}
+function pickAgent(id,quiet){agent=id;try{localStorage.setItem('gs_agent',id)}catch(e){}
+ document.querySelectorAll('#agentBar button').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
+ const a=AG[id];document.getElementById('agentAbout').textContent=a.about||'';kPanel.hidden=!a.kundali;
+ if(a.inbox)document.getElementById('ps').value=a.inbox;
+ if(!quiet&&a.examples.length){const d=add('sys','');d.append(a.icon+' '+a.name+' — उदाहरणे: ');
+  a.examples.forEach(x=>{const c=document.createElement('span');c.className='chip';c.textContent=x;c.onclick=()=>{q.value=x;send()};d.appendChild(c)})}}
+function birthInput(){const pl=document.getElementById('kPlace').value;
+ const b={name:kName.value,date:kDate.value,time:kTime.value,tz:kTz.value};
+ if(pl==='__other'){b.lat=kLat.value;b.lon=kLon.value}else b.place=pl;return b}
+async function makeKundali(){const b=birthInput();if(!b.date||!b.time){kmsg.textContent='जन्म तारीख आणि वेळ द्या.';return}
+ kmsg.textContent='⏳ गणित चालू आहे… (पहिल्यांदा ग्रह-तक्ता ~17 MB उतरतो)';
+ try{const r=await (await fetch('/kundali',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();
+  if(!r.ok){kmsg.textContent=r.msg;return}
+  birth=b;kmsg.textContent='✅ कुंडली तयार — आता विचारलेले प्रश्न या कुंडलीनुसार उत्तरले जातील.';document.getElementById('kClear').hidden=false;
+  const d=add('bot','');const w=document.createElement('div');w.className='kchart';w.innerHTML=r.svg;
+  const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=r.text;w.appendChild(t);d.appendChild(w);
+  const tbl=document.createElement('div');tbl.className='src';tbl.textContent='विंशोत्तरी महादशा: '+r.chart.dasha.periods.map(p=>p.graha+' '+p.from.slice(0,4)+'–'+p.to.slice(0,4)).join(' · ');d.appendChild(tbl);
+  const c=document.createElement('div');['या कुंडलीचे ग्रंथानुसार मुख्य फल सांगा','लग्न राशीचे फल ग्रंथांनुसार','कुंडलीतील योगांचे फल'].forEach(x=>{const s=document.createElement('span');s.className='chip';s.textContent=x;s.onclick=()=>{q.value=x;send()};c.appendChild(s)});d.appendChild(c);
+  chat.scrollTop=1e9}catch(e){kmsg.textContent='⚠️ '+e}}
+function clearKundali(){birth=null;document.getElementById('kClear').hidden=true;kmsg.textContent='कुंडली काढली — आता सामान्य प्रश्न.'}
+loadAgents();
 status();
 </script></body></html>"""
 
@@ -865,6 +993,9 @@ class Handler(BaseHTTPRequestHandler):
                         "warn": warn, "indexing": INDEX_STATUS["running"], "progress": INDEX_STATUS["msg"],
                         "ocr": OCR_STATUS["running"], "ocr_msg": OCR_STATUS["msg"], "ocr_error": OCR_STATUS["error"],
                         "ocr_ready": pdf_ocr is not None and pdf_ocr.check_setup()[0], "version": VERSION})
+        elif self.path == "/agents":
+            import jyotish
+            self._json({"agents": agents.public_list(), "cities": list(jyotish.CITIES)})
         else:
             self.send_error(404)
 
@@ -876,7 +1007,7 @@ class Handler(BaseHTTPRequestHandler):
                 OCR_STATUS["blocked"] = ""
                 path = save_upload(self.rfile, int(self.headers.get("Content-Length", 0)),
                                    qs.get("file", ["granth.pdf"])[0], qs.get("name", [""])[0],
-                                   qs.get("lang", ["auto"])[0])
+                                   qs.get("lang", ["auto"])[0], qs.get("subject", [""])[0])
                 safe_start_ocr()
                 self._json({"ok": True, "msg": f"📥 {os.path.basename(path)} मिळाली — मजकूर बनवणे सुरू (प्रगती वर दिसेल)."})
             except Exception as e:
@@ -903,6 +1034,13 @@ class Handler(BaseHTTPRequestHandler):
             msg = docs_report() + "\n" + ("⏳ वाचन सुरू झाले — प्रगती वरच्या पट्टीत दिसेल. तोपर्यंत प्रश्न विचारू शकता."
                                           if started else "⏳ वाचन आधीच चालू आहे.")
             self._json({"msg": msg})
+        elif self.path == "/kundali":
+            try:
+                import jyotish
+                c = kundali_from(self._body())
+                self._json({"ok": True, "chart": c, "svg": jyotish.chart_svg(c), "text": jyotish.summary_text(c)})
+            except Exception as e:
+                self._json({"ok": False, "msg": f"⚠️ {e}"})
         elif self.path == "/ask":
             self.answer(self._body())
         else:
@@ -918,17 +1056,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         try:
-            for ev in answer_events((data.get("q") or "").strip(), data.get("history", [])):
+            chart = None
+            if data.get("birth"):
+                try:
+                    chart = kundali_from(data["birth"])
+                except Exception as e:
+                    self._send({"type": "error", "msg": f"कुंडली बनवता आली नाही: {e}"})
+            for ev in answer_events((data.get("q") or "").strip(), data.get("history", []),
+                                    data.get("agent"), chart):
                 self._send(ev)
         except (BrokenPipeError, ConnectionResetError):
             return
 
 
-def answer_events(question, history=()):
-    """एका प्रश्नाचे उत्तर — sources, alert, token, error, done असे events देतो."""
+def answer_events(question, history=(), agent_id=None, kundali=None):
+    """एका प्रश्नाचे उत्तर — sources, alert, token, error, done असे events देतो.
+    agent_id: विषय-agent (agents.json); kundali: jyotish.compute_chart() चे उत्तर (ज्योतिष agent साठी)"""
     history = [m for m in history if m.get("role") in ("user", "assistant")][-6:]
+    agent = agents.get(agent_id)
+    if not agent.get("kundali"):
+        kundali = None
     try:
-        hits = search(question)
+        if kundali:
+            import jyotish
+            hits = search_multi([question] + jyotish.search_queries(kundali)[:10], agent)
+        else:
+            hits = search(question, agent if agent["folders"] else None)
     except Exception as e:
         hits = []
         yield {"type": "error", "msg": f"फाइल्स शोधता आल्या नाहीत ({e}) — सामान्य उत्तर देत आहे."}
@@ -942,13 +1095,17 @@ def answer_events(question, history=()):
     if MODE == "granth" and _has(question, CAUTION):
         yield {"type": "alert", "msg": CAUTION_MSG}
     if hits:
-        ctx = "\n\n".join(mr_refs(text) for _, _, text in hits)
-        user_msg = f"संदर्भ:\n{ctx}\n\n---\nप्रश्न: {question}"
+        ctx = "\n\n".join(f"({agents.source_tag(name)})\n{mr_refs(text)}" for _, name, text in hits)
+        user_msg = f"संदर्भ:\n{ctx}\n\n---\n"
     else:
-        user_msg = question
+        user_msg = ""
+    if kundali:
+        import jyotish
+        user_msg += "जन्मकुंडली (गणिताने काढलेली — हीच ग्रह-स्थिती वापर):\n" + jyotish.summary_text(kundali) + "\n\n---\n"
+    user_msg = (user_msg + f"प्रश्न: {question}") if user_msg else question
     if MODE == "granth":
         user_msg += MARATHI_REMINDER
-    prompt = GRANTH_PROMPT if MODE == "granth" else SYSTEM_PROMPT
+    prompt = agents.prompt(agent, GRANTH_PROMPT) if MODE == "granth" else SYSTEM_PROMPT
     messages = [{"role": "system", "content": prompt}] + list(history) + \
                [{"role": "user", "content": user_msg}]
     payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
@@ -1084,6 +1241,8 @@ def main():
     if not ok:
         print(f"⚠️  Ollama ({OLLAMA}) चालू नाही. Ollama सुरू करा — chat पान तरी उघडेल.")
     os.makedirs(PDF_INBOX, exist_ok=True)              # ZIP मधून आल्यावरही folder असावा
+    for subj in agents.inbox_subjects():               # विषय-folders: pdf_inbox\ज्योतिष इ.
+        os.makedirs(os.path.join(PDF_INBOX, subj), exist_ok=True)
     os.makedirs(DOCS_DIR, exist_ok=True)
     load_index()
     rebuild_vecs()
