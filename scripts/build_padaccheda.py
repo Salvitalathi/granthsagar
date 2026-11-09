@@ -30,13 +30,13 @@ def ensure_repo():
 
 
 def all_texts():
-    out = subprocess.run(["git", "-c", "core.quotepath=off", "ls-tree", "-r", "-l", "HEAD", FILES], cwd=CACHE,
-                         capture_output=True, text=True, check=True).stdout
+    """{ग्रंथ: फाइल्सची संख्या} — (-l नको: blob:none clone मध्ये ते प्रत्येक फाइल उतरवते)"""
+    out = subprocess.run(["git", "-c", "core.quotepath=off", "ls-tree", "-r", "--name-only", "HEAD", FILES],
+                         cwd=CACHE, capture_output=True, text=True, check=True).stdout
     size = {}
-    for line in out.splitlines():
-        meta, path = line.split("\t", 1)
+    for path in out.splitlines():
         name = path[len(FILES):].split("/")[0]
-        size[name] = size.get(name, 0) + int(meta.split()[3])
+        size[name] = size.get(name, 0) + 1
     return size
 
 
@@ -68,8 +68,8 @@ def main():
     sizes = all_texts()
     if "--list" in sys.argv:
         for k, v in sorted(sizes.items(), key=lambda x: -x[1]):
-            print(f"{v / 1e6:8.1f} MB  {k}")
-        print(f"एकूण {sum(sizes.values()) / 1e6:.0f} MB, {len(sizes)} ग्रंथ")
+            print(f"{v:6d} files  {k}")
+        print(f"एकूण {sum(sizes.values())} files, {len(sizes)} ग्रंथ")
         return
     names = [a for a in sys.argv[1:] if not a.startswith("-")] or DEFAULT
     names = [n for n in names if n in sizes] + [n for n in names if n not in sizes and print("⚠️ नाही:", n)]
