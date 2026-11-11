@@ -1170,7 +1170,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _json(self, obj, code=200):
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(obj, ensure_ascii=False, default=_plain).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -1276,7 +1276,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def _send(self, obj):
-        self.wfile.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        self.wfile.write((json.dumps(obj, ensure_ascii=False, default=_plain) + "\n").encode("utf-8"))
         self.wfile.flush()
 
     def answer(self, data):
@@ -1455,6 +1455,15 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
 
 GEM_ADVICE = re.compile(r"(रत्न|अंगठी|मूंगा|मोती|पोवळ|पुष्कराज|नीलम|माणिक|पाचू|हिरा|गोमेद|लसण्या|यंत्र|ताईत|"
                         r"रुद्राक्ष|दान|उपाय)[^।\n]{0,40}(घाला|घालावी|घालावा|जडव|धारण|करावे|करा|द्यावे|आवश्यक)")
+
+
+def _plain(o):
+    """numpy चे bool/float/int (उदा. Skyfield मधून) -> साधे Python, म्हणजे JSON मध्ये जातात"""
+    if hasattr(o, "item"):
+        return o.item()
+    if hasattr(o, "tolist"):
+        return o.tolist()
+    raise TypeError(f"{type(o).__name__} JSON मध्ये जात नाही")
 
 
 def is_looping(text, span=70):
