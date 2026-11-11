@@ -379,6 +379,14 @@ check("जन्म-माहिती: १५/०८/१९९० सकाळ�
       and _J.parse_birth("3 मार्च 2001 दुपारी 2:15")["time"] == "14:15"
       and _J.parse_birth("5 May 1990 रात्री 1:10")["time"] == "01:10")
 check("जन्म-माहिती: साधा प्रश्न -> काहीच नाही", _J.parse_birth("मेष लग्नाचे फल काय? मे महिन्यात") == {})
+import agents as _ag, datetime as _dt
+_jp, _kp = _ag.prompt(_ag.get("jyotish"), "B"), _ag.prompt(_ag.get("jyotish"), "B", kundali=True)
+check("ज्योतिष: कुंडली असताना फलादेश-रचना, नियम तसेच", "थोडक्यात फलादेश" in _kp and "थोडक्यात फलादेश" not in _jp
+      and "मृत्यू" in _kp and "रत्न" in _kp)
+_v = _J.vimshottari(55.0, _dt.datetime(1977, 7, 12, 20, 30))
+_cd = _J.current_dasha({"dasha": _v}, _dt.datetime(2026, 11, 11))
+check("दशा: 2026-11 ला शनि-शुक्र (2024-06-17 ते 2027-08-18)",
+      (_cd["maha"], _cd["antar"], _cd["antar_from"], _cd["antar_to"]) == ("शनि", "शुक्र", "2024-06-17", "2027-08-18"))
 check("रत्न-सल्ला ओळखणे", bool(gs.GEM_ADVICE.search("मंगळासाठी सोन्याच्या अंगठीत मूंगा जडवून घाला"))
       and not gs.GEM_ADVICE.search("ग्रंथात रत्नांचे वर्णन आहे"))
 
