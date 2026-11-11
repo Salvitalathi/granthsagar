@@ -287,10 +287,98 @@ def vimshottari(moon_lon, birth):
         lord, years = DASHA[(i + k) % 9]
         end = start + _dt.timedelta(days=years * 365.25)
         out.append({"graha": lord, "from": max(start, birth).strftime("%Y-%m-%d"), "to": end.strftime("%Y-%m-%d"),
-                    "years": years})
+                    "years": years, "start": start.strftime("%Y-%m-%d")})     # start = खरी सुरुवात (जन्माआधीही)
         start = end
     return {"balance": f"{DASHA[i][0]} महादशा, जन्मावेळी उरलेली ~{(1 - frac) * DASHA[i][1]:.1f} वर्षे",
             "periods": out}
+
+
+SIGN_LORD = ["मंगळ", "शुक्र", "बुध", "चंद्र", "सूर्य", "बुध", "शुक्र", "मंगळ", "गुरु", "शनि", "शनि", "गुरु"]
+_DORDER = [g for g, _ in DASHA]
+_DYEARS = dict(DASHA)
+
+
+def _d(s):
+    return _dt.datetime.strptime(s, "%Y-%m-%d")
+
+
+def antardashas(maha, start):
+    """एका महादशेतील ९ अंतर्दशा — महादशा-स्वामीपासून विंशोत्तरी क्रमाने, कालावधी = म × अ / १२०"""
+    i, out, t = _DORDER.index(maha), [], start
+    for k in range(9):
+        g = _DORDER[(i + k) % 9]
+        end = t + _dt.timedelta(days=_DYEARS[maha] * _DYEARS[g] / 120 * 365.25)
+        out.append({"graha": g, "from": t, "to": end})
+        t = end
+    return out
+
+
+def current_dasha(c, on=None):
+    """दिलेल्या दिवशी (default आज) चालू महादशा-अंतर्दशा + पुढच्या ३ अंतर्दशा"""
+    on = on or _dt.datetime.now()
+    per = c["dasha"]["periods"]
+    for k, p in enumerate(per):
+        s = _d(p.get("start", p["from"]))
+        if s <= on < _d(p["to"]):
+            ads = antardashas(p["graha"], s)
+            j = next(n for n, a in enumerate(ads) if a["from"] <= on < a["to"])
+            nxt = ads[j + 1:j + 4]
+            if len(nxt) < 3 and k + 1 < len(per):
+                nm = per[k + 1]
+                nxt += [dict(a, maha=nm["graha"]) for a in antardashas(nm["graha"], _d(nm["start"]))][:3 - len(nxt)]
+            f = lambda x: x.strftime("%Y-%m-%d")
+            return {"maha": p["graha"], "maha_to": p["to"], "antar": ads[j]["graha"],
+                    "antar_from": f(ads[j]["from"]), "antar_to": f(ads[j]["to"]),
+                    "next": [{"maha": a.get("maha", p["graha"]), "antar": a["graha"], "from": f(a["from"]),
+                              "to": f(a["to"])} for a in nxt]}
+    return None
+
+
+def gochar(c, on=None):
+    """आजचे (किंवा दिलेल्या दिवशीचे) शनि, गुरु, राहू, केतू — जन्म-चंद्र आणि लग्नापासून कितवे स्थान"""
+    ts, _ = _load()
+    on = on or _dt.datetime.utcnow()
+    t = ts.utc(on.year, on.month, on.day, on.hour, on.minute)
+    ayan = lahiri_ayanamsa(t)
+    trop = tropical_longitudes(t)
+    moon_s = next(p["sign"] for p in c["planets"] if p["graha"] == "चंद्र")
+    out = []
+    for g in ("शनि", "गुरु", "राहू", "केतू"):
+        s = int(((trop[g] - ayan) % 360) // 30)
+        out.append({"graha": g, "rashi": RASHI[s], "from_moon": (s - moon_s) % 12 + 1,
+                    "from_lagna": (s - c["lagna"]["sign"]) % 12 + 1})
+    shani = out[0]["from_moon"]
+    notes = []
+    if shani in (12, 1, 2):
+        notes.append(f"शनि जन्म-चंद्रापासून {shani} व्या स्थानी — परंपरेनुसार साडेसातीचा "
+                     f"{ {12: 'पहिला', 1: 'दुसरा', 2: 'तिसरा'}[shani]} टप्पा")
+    elif shani in (4, 8):
+        notes.append(f"शनि जन्म-चंद्रापासून {shani} व्या स्थानी — परंपरेनुसार {'कंटक' if shani == 4 else 'अष्टम'} शनि")
+    return {"date": on.strftime("%Y-%m-%d"), "grahas": out, "notes": notes}
+
+
+def kaal_text(c, on=None):
+    """'सध्याचा काळ' — AI ला भविष्याबद्दल बोलण्यासाठी आधार (दशा + गोचर)"""
+    P = {p["graha"]: p for p in c["planets"]}
+    lines = []
+    d = current_dasha(c, on)
+    if d:
+        m, a = P[d["maha"]], P[d["antar"]]
+        lines.append(f"चालू महादशा: {d['maha']} ({d['maha_to']} पर्यंत) — {d['maha']} कुंडलीत {m['rashi']} राशीत, "
+                     f"{m['bhava']} व्या स्थानी")
+        lines.append(f"चालू अंतर्दशा: {d['antar']} ({d['antar_from']} ते {d['antar_to']}) — {d['antar']} कुंडलीत "
+                     f"{a['rashi']} राशीत, {a['bhava']} व्या स्थानी")
+        lines.append("पुढच्या अंतर्दशा: " + "; ".join(f"{n['maha']}-{n['antar']} {n['from']} ते {n['to']}"
+                                                   for n in d["next"]))
+    try:
+        g = gochar(c, on)
+        lines.append(f"गोचर ({g['date']}): " + "; ".join(
+            f"{x['graha']} {x['rashi']} राशीत (चंद्रापासून {x['from_moon']} वे, लग्नापासून {x['from_lagna']} वे)"
+            for x in g["grahas"]))
+        lines += g["notes"]
+    except Exception:
+        pass                                   # ephemeris नसेल तर फक्त दशा
+    return "\n".join(lines)
 
 
 def find_yogas(chart):
@@ -325,8 +413,11 @@ def summary_text(c):
              f"अक्षांश {c['lat']:.3f}, रेखांश {c['lon']:.3f}; लाहिरी अयनांश {c['ayanamsa']}",
              f"लग्न: {c['lagna']['rashi']} {c['lagna']['deg']} ({c['lagna']['nakshatra']} नक्षत्र)",
              f"चंद्र राशी: {c['panchang']['rashi']}; जन्म नक्षत्र: {c['panchang']['nakshatra']}",
-             f"पंचांग: {c['panchang']['vara']}, {c['panchang']['tithi']}, योग {c['panchang']['yoga']}",
-             "ग्रह:"]
+             f"पंचांग: {c['panchang']['vara']}, {c['panchang']['tithi']}, योग {c['panchang']['yoga']}"]
+    lord = SIGN_LORD[c["lagna"]["sign"]]
+    lp = next(p for p in c["planets"] if p["graha"] == lord)
+    lines.append(f"लग्नेश: {lord} — {lp['rashi']} राशीत, {lp['bhava']} व्या स्थानी")
+    lines.append("ग्रह:")
     for p in c["planets"]:
         extra = ", ".join(p["status"] + (["वक्री"] if p["vakri"] else []))
         lines.append(f"  {p['graha']}: {p['rashi']} {p['deg']}, {p['bhava']} वे स्थान, "
@@ -336,17 +427,25 @@ def summary_text(c):
     return "\n".join(lines)
 
 
-def search_queries(c):
-    """ग्रंथांत शोधण्यासाठी प्रश्न — मराठी + संस्कृत रूपे"""
-    q = [f"{RASHI_SA[c['lagna']['sign']]} लग्न फल", f"{c['lagna']['rashi']} लग्नाचे फल"]
-    for p in c["planets"]:
-        if p["graha"] in ("राहू", "केतू"):
-            continue
-        q.append(f"{p['graha']} {RASHI_SA[p['sign']]} राशौ फलम्")
-        q.append(f"{p['graha']} {p['bhava']} भावात फल")
-    q.append(f"चंद्र {c['planets'][1]['nakshatra']} नक्षत्र जन्म फल")
+def search_queries(c, on=None):
+    """ग्रंथांत शोधण्यासाठी प्रश्न — महत्त्वाच्या क्रमाने (लग्न, चंद्र, योग, लग्नेश, चालू दशा, मग इतर ग्रह).
+    answer_events पहिले काहीच वापरतो, म्हणून क्रम महत्त्वाचा."""
+    P = {p["graha"]: p for p in c["planets"]}
+    lord = SIGN_LORD[c["lagna"]["sign"]]
+    q = [f"{RASHI_SA[c['lagna']['sign']]} लग्न फल", f"चंद्र {P['चंद्र']['nakshatra']} नक्षत्र जन्म फल"]
     q += [y["name"] for y in c["yogas"]]
-    return q
+    q.append(f"लग्नेश {P[lord]['bhava']} भावात फल")
+    d = current_dasha(c, on)
+    if d:
+        q.append(f"{d['maha']} महादशा फल")
+        q.append(f"{d['maha']} दशायां {d['antar']} अन्तर्दशा फलम्")
+    q.append(f"चंद्र {RASHI_SA[P['चंद्र']['sign']]} राशौ फलम्")
+    for p in c["planets"]:
+        if p["graha"] in ("राहू", "केतू", "चंद्र"):
+            continue
+        q.append(f"{p['graha']} {p['bhava']} भावात फल")
+        q.append(f"{p['graha']} {RASHI_SA[p['sign']]} राशौ फलम्")
+    return list(dict.fromkeys(q))
 
 
 def chart_svg(c, size=320):

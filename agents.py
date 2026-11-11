@@ -6,6 +6,7 @@
   inbox    — pdf_inbox/<inbox>/ मध्ये टाकलेल्या PDF चा मजकूर granth/pdf/<inbox>/ मध्ये जातो → आपोआप याच agent चा
   intro    — उत्तराची रचना (रिकामे = ग्रंथसागरची सर्वसाधारण रचना)
   rules    — या विषयाचे कडक नियम (सर्वसाधारण नियमांच्या जोडीला)
+  kundali_intro — (ज्योतिष) जन्मकुंडली दिली असेल तेव्हाची उत्तर-रचना: फलादेश, फक्त संदर्भ नव्हे
 """
 import json
 import os
@@ -66,9 +67,11 @@ def inbox_subjects():
     return {a["inbox"]: a["id"] for a in AGENTS if a.get("inbox")}
 
 
-def prompt(agent, base_prompt):
-    """agent चा system prompt. intro नसेल तर सर्वसाधारण prompt; rules नेहमी जोडले जातात."""
-    p = "\n".join(agent["intro"]) if agent["intro"] else base_prompt
+def prompt(agent, base_prompt, kundali=False):
+    """agent चा system prompt. intro नसेल तर सर्वसाधारण prompt; rules नेहमी जोडले जातात.
+    kundali=True आणि agent मध्ये kundali_intro असेल तर तो (फलादेशाची रचना) वापरला जातो."""
+    intro = agent.get("kundali_intro") if kundali and agent.get("kundali_intro") else agent["intro"]
+    p = "\n".join(intro) if intro else base_prompt
     if agent["rules"]:
         p += "\n\n" + agent["name"] + " — विशेष नियम:\n" + "\n".join("- " + r for r in agent["rules"])
     p += ("\n\nसंदर्भातील प्रत्येक तुकड्यासोबत त्याचा प्रकार दिला आहे: 'मूळ ग्रंथ' असेल तर श्लोक पूर्ण उद्धृत कर; "

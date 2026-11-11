@@ -61,6 +61,9 @@ TOP_K = 5          # प्रत्येक प्रश्नासाठी 
 MIN_SCORE = 0.35   # यापेक्षा कमी जुळणारे तुकडे सोडून द्या
 NUM_CTX = 4096     # मॉडेलची context window (जास्त = जास्त RAM)
 NUM_PREDICT = 900  # उत्तराची कमाल लांबी (tokens)
+# कुंडली-फलादेश: ८ तुकडे + कुंडली + दशा/गोचर — 4096 मध्ये मावत नाही (Ollama सुरुवात कापतो = system prompt जातो)
+KUNDALI_CTX = int(os.environ.get("GS_KUNDALI_CTX") or (8192 if total_ram_gb() >= 8 else 6144))
+KUNDALI_PREDICT = 1400
 
 SYSTEM_PROMPT = """तू "ग्रंथसागर" आहेस — एक मदतनीस सहाय्यक. वापरकर्ता ज्या भाषेत विचारेल त्याच भाषेत उत्तर दे (सहसा मराठी).
 जर खाली "संदर्भ" दिला असेल, तर उत्तर मुख्यतः त्यावरूनच दे आणि कोणत्या फाइलमधून माहिती घेतली ते [फाइलचे नाव] असे सांग.
@@ -1320,7 +1323,7 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
     try:
         if kundali:
             import jyotish
-            hits = search_multi([question] + jyotish.search_queries(kundali)[:10], agent)
+            hits = search_multi([question] + jyotish.search_queries(kundali)[:11], agent, total=TOP_K + 3)
         else:
             hits = search(question, agent if agent["folders"] else None)
     except Exception as e:
@@ -1390,17 +1393,24 @@ def answer_events(question, history=(), agent_id=None, kundali=None):
     if kundali:
         import jyotish
         user_msg += "जन्मकुंडली (गणिताने काढलेली — हीच ग्रह-स्थिती वापर):\n" + jyotish.summary_text(kundali) + "\n\n---\n"
+        kaal = jyotish.kaal_text(kundali)
+        if kaal:
+            user_msg += "सध्याचा काळ (आजच्या तारखेला, गणिताने काढलेला):\n" + kaal + "\n\n---\n"
     user_msg = (user_msg + f"प्रश्न: {question}") if user_msg else question
     if "🖼" in user_msg:
         user_msg += ("\n\n(संदर्भातील '🖼 चित्र' म्हणजे ग्रंथातील चित्र/कुंडली/तक्ता — ते उत्तराखाली दाखवले जाईल. "
                      "चित्राचा उल्लेख 'पृ. N वरील चित्र पाहा' असा कर; AI-वर्णन चुकीचे असू शकते असे सांग.)")
+    if kundali:
+        user_msg += ("\n\n(सूचना: वरील कुंडली, सध्याचा काळ आणि ग्रंथ-संदर्भ एकत्र वापरून या व्यक्तीचा फलादेश सांग. "
+                     "फक्त संदर्भांची यादी किंवा श्लोकांचा अर्थ देऊ नकोस — प्रत्येक मुद्दा कुंडलीतील स्थितीशी जोड.)")
     if MODE == "granth":
         user_msg += MARATHI_REMINDER
-    prompt = agents.prompt(agent, GRANTH_PROMPT) if MODE == "granth" else SYSTEM_PROMPT
+    prompt = agents.prompt(agent, GRANTH_PROMPT, kundali=bool(kundali)) if MODE == "granth" else SYSTEM_PROMPT
     messages = [{"role": "system", "content": prompt}] + list(history) + \
                [{"role": "user", "content": user_msg}]
     payload = {"model": CHAT_MODEL, "messages": messages, "stream": True,
-               "options": {"num_ctx": NUM_CTX, "num_predict": NUM_PREDICT, "temperature": 0.2,
+               "options": {"num_ctx": KUNDALI_CTX if kundali else NUM_CTX,
+                           "num_predict": KUNDALI_PREDICT if kundali else NUM_PREDICT, "temperature": 0.2,
                            "top_p": 0.9, "repeat_penalty": 1.05, "repeat_last_n": 64,
                            # उत्तरानंतर मॉडेल स्वतःच नवा 'प्रश्न:' / सूचना लिहू लागते — तिथे थांबवा
                            "stop": ["\n---\nप्रश्न", "\nप्रश्न:", "(सूचना: उत्तर फक्त", "\n---\n"]}}

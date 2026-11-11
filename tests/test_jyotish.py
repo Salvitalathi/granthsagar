@@ -75,6 +75,33 @@ asc = swe.houses_ex(jd, lat, lon, b"W", swe.FLG_SIDEREAL)[1][0]
 if abs(((asc - c["lagna"]["lon"]) + 180) % 360 - 180) > 5 / 3600:
     fail.append("अलिबाग लग्न")
 
+# चालू दशा-अंतर्दशा + गोचर (भविष्याच्या प्रश्नांसाठी)
+import datetime as _dt
+c = J.compute_chart("1977-07-12", "20:30", *J.CITIES["अलिबाग"])
+for p in c["dasha"]["periods"]:
+    ads = J.antardashas(p["graha"], _dt.datetime.strptime(p["start"], "%Y-%m-%d"))
+    if ads[0]["graha"] != p["graha"] or abs((ads[-1]["to"] - ads[0]["from"]).days / 365.25 - p["years"]) > 0.01:
+        fail.append(f"अंतर्दशा {p['graha']}")
+on = _dt.datetime(2026, 11, 11)
+cd = J.current_dasha(c, on)
+if not cd or not (cd["antar_from"] <= "2026-11-11" < cd["antar_to"]) or len(cd["next"]) != 3:
+    fail.append(f"चालू दशा {cd}")
+g = J.gochar(c, on)
+jd = swe.julday(2026, 11, 11, 0)
+for x in g["grahas"]:
+    pid = {"शनि": swe.SATURN, "गुरु": swe.JUPITER, "राहू": swe.MEAN_NODE}.get(x["graha"])
+    if pid is not None:
+        L = swe.calc_ut(jd, pid, swe.FLG_SIDEREAL | swe.FLG_MOSEPH)[0][0]
+        if J.RASHI[int(L // 30)] != x["rashi"] and min(L % 30, 30 - L % 30) > 0.05:
+            fail.append(f"गोचर {x['graha']}")
+kt = J.kaal_text(c, on)
+print("\nसध्याचा काळ:\n" + kt)
+if "चालू महादशा" not in kt or "गोचर" not in kt or "लग्नेश" not in J.summary_text(c):
+    fail.append("kaal_text")
+q = J.search_queries(c, on)
+if not any("महादशा" in x for x in q[:8]):
+    fail.append("दशा-शोध पहिल्या ८ मध्ये नाही")
+
 if worst["ayan"] > 1 / 3600:
     fail.append(f"अयनांश फरक {worst['ayan']*3600:.1f}\"")
 if fail:
