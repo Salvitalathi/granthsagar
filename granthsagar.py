@@ -623,8 +623,9 @@ def figure_books():
 
 
 def write_fig_descs(root, figs):
-    """*.png.desc -> चित्र_वर्णन_XX.txt (२० चित्रे एका फाइलमध्ये; फक्त शेवटची फाइल बदलते)"""
-    rows = []
+    """*.png.desc -> चित्र_वर्णन_XX.txt (२० चित्रे एका फाइलमध्ये; फक्त शेवटची फाइल बदलते).
+    चित्रे काढली गेली असतील (उदा. scripts/fix_figures.py) तर उरलेल्या जुन्या वर्णन-फाइल्स काढते. परत: काही बदलले का"""
+    rows, changed = [], False
     for page, k, rel, labels, book in figs:
         d = os.path.join(root, rel + ".desc")
         if os.path.exists(d):
@@ -639,6 +640,13 @@ def write_fig_descs(root, figs):
             with open(path + ".tmp", "w", encoding="utf-8") as f:
                 f.write(body)
             os.replace(path + ".tmp", path)
+            changed = True
+    n = -(-len(rows) // DESC_PER_FILE)
+    for f in os.listdir(root):
+        m = re.match(r"चित्र_वर्णन_(\d+)\.txt$", f)
+        if m and int(m.group(1)) > n:
+            os.remove(os.path.join(root, f)); changed = True
+    return changed
 
 
 def describe_figure(png, book, page, labels):
@@ -666,6 +674,8 @@ def start_figures():
     books = figure_books()
     todo = [(root, f) for root, figs in books for f in figs if not os.path.exists(os.path.join(root, f[2] + ".desc"))]
     if not todo:
+        if any([write_fig_descs(r, figs) for r, figs in books]):    # काढलेल्या चित्रांची वर्णने साफ
+            start_indexing()
         _FIG_SIG[0] = sig
         return False
 

@@ -165,8 +165,44 @@ def _otsu(a):
     return t_best
 
 
-def find_figures(gray, text_boxes, min_w=0.15, min_h=0.08):
+def text_share(gray, boxes, thresh=None):
+    """एखाद्या भागातील शाईपैकी किती शाई शब्दांच्या चौकटींखाली आहे (0..1), आणि शाईची घनता.
+    मजकूर-भाग: बहुतेक सर्व शाई शब्दांखाली. कुंडली/आकृती: रेषा शब्दांबाहेर उरतात. फोटो: घनता जास्त."""
+    import numpy as np
+    if gray.size == 0:
+        return 0.0, 0.0
+    t = thresh if thresh is not None else min(_otsu(gray), 200)
+    ink = gray <= t
+    total = int(ink.sum())
+    if total == 0:
+        return 0.0, 0.0
+    m = np.zeros_like(ink)
+    for (x, y, bw, bh) in boxes:
+        m[max(0, y - 2):y + bh + 2, max(0, x - 2):x + bw + 2] = True
+    return float((ink & m).sum()) / total, total / ink.size
+
+
+def soft_text_boxes(words, min_conf=20):
+    """कमी खात्रीचे पण अक्षरे असलेले शब्दही — जुन्या scan मध्ये खरा मजकूर अनेकदा conf 20–50 असतो.
+    फोटोवर Tesseract चा कचरा बहुधा चिन्हे/एक-अक्षरी असतो, म्हणून किमान २ अक्षरे."""
+    return [(w["x"], w["y"], w["w"], w["h"]) for w in words
+            if w["conf"] >= min_conf and len(LETTER.findall(w["text"])) >= 2]
+
+
+def is_text_region(gray, box, soft_boxes, thresh=None):
+    """box मधील शाई जवळजवळ सगळी शब्दांखाली असेल (≥ 65%) आणि भाग दाट फोटो नसेल -> हा मजकूर, चित्र नाही"""
+    x0, y0, x1, y1 = box
+    inside_ = [(x - x0, y - y0, w, h) for (x, y, w, h) in soft_boxes
+               if x0 <= x + w / 2 <= x1 and y0 <= y + h / 2 <= y1]
+    if len(inside_) < 3:
+        return False
+    share, density = text_share(gray[y0:y1, x0:x1], inside_, thresh)
+    return share >= 0.65 and density < 0.35
+
+
+def find_figures(gray, text_boxes, min_w=0.15, min_h=0.08, soft_boxes=None):
     """gray: पानाचे greyscale चित्र (numpy uint8, H x W); text_boxes: [(x, y, w, h)] खऱ्या मजकुराचे.
+    soft_boxes: कमी खात्रीचे शब्दही — दिले तर जो 'चित्र' भाग फक्त अशा शब्दांनी बनला आहे तो वगळला जातो.
     परत: चित्रांचे [(x0, y0, x1, y1)] (pixels)"""
     import numpy as np
     H, W = gray.shape
@@ -226,6 +262,8 @@ def find_figures(gray, text_boxes, min_w=0.15, min_h=0.08):
                 break
         else:
             merged.append(f)
+    if soft_boxes:
+        merged = [f for f in merged if not is_text_region(gray, f, soft_boxes, t)]
     return sorted(merged, key=lambda f: (f[1], f[0]))
 
 
@@ -264,7 +302,8 @@ def ocr_page_layout(words, img, fig_dir, page, find=True, table=None, label_fn=N
     figs = []
     if find and img is not None:
         try:
-            figs = find_figures(np.asarray(img.convert("L")), real_text_boxes(words))
+            figs = find_figures(np.asarray(img.convert("L")), real_text_boxes(words),
+                                soft_boxes=soft_text_boxes(words))
         except Exception:
             figs = []
     labels = [[] for _ in figs]
