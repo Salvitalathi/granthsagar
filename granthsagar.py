@@ -1022,147 +1022,338 @@ def kundali_from(b):
 
 
 # ===================== Web chat =====================
-PAGE = r"""<!DOCTYPE html><html lang="mr"><head><meta charset="utf-8">
+PAGE = r"""<!DOCTYPE html><html lang="mr" data-theme="pothi"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ग्रंथसागर</title><style>
-*{box-sizing:border-box}body{margin:0;font-family:"Nirmala UI","Noto Sans Devanagari","Mangal",system-ui,sans-serif;background:#f4f1ea;color:#222;display:flex;flex-direction:column;height:100vh}
-header{background:#1f4e5f;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px}
-header h1{font-size:20px;margin:0;flex:1}header small{opacity:.8;font-size:13px}
-button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:#e07a2f;color:#fff}
-button.ghost{background:transparent;border:1px solid #fff8}
-#chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;max-width:900px;width:100%;margin:0 auto}
-.msg{padding:10px 14px;border-radius:12px;line-height:1.6;white-space:pre-wrap;max-width:85%}
-.user{align-self:flex-end;background:#1f4e5f;color:#fff}
-.bot{align-self:flex-start;background:#fff;box-shadow:0 1px 3px #0002}
-.src{font-size:13px;color:#666;margin-top:6px;border-top:1px dashed #ccc;padding-top:4px}
-.alert{align-self:stretch;background:#fde2e1;color:#8a1c1c;border:1px solid #e9a3a0;border-radius:10px;padding:10px 14px;font-weight:600}
-#pdfPanel{background:#fff8ec;border-bottom:1px solid #e6d3b3;padding:10px 16px;font-size:14px}
-#pdfPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}#pdfPanel input,#pdfPanel select{font:inherit;padding:6px;border:1px solid #bbb;border-radius:6px}
-#pn{flex:1;min-width:220px}#pmsg{margin-top:6px;color:#555;white-space:pre-wrap}
-.sys{align-self:center;font-size:14px;color:#555;background:#e8e2d4;border-radius:8px;padding:6px 12px}
-form{display:flex;gap:8px;padding:12px;max-width:900px;width:100%;margin:0 auto}
-#agentBar{display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;background:#e8e2d4;border-bottom:1px solid #d6ccb6}
-#agentBar button{background:#fff;color:#1f4e5f;border:1px solid #c9bda3;padding:6px 12px}
-#agentBar button.on{background:#1f4e5f;color:#fff;border-color:#1f4e5f}
-#agentAbout{font-size:13px;color:#555;align-self:center}
-#kPanel{background:#f3f0fb;border-bottom:1px solid #d7cff0;padding:10px 16px;font-size:14px}
-#kPanel input,#kPanel select{font:inherit;padding:6px;border:1px solid #bbb;border-radius:6px}
-#kPanel .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
-.kchart{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.kchart svg{max-width:100%;height:auto}
-.figs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.figs img{max-height:180px;max-width:240px;border:1px solid #ccc;border-radius:6px;background:#fff}
-.pada{margin-top:8px;font-size:14px}.pada summary{cursor:pointer;color:#1f4e5f;font-weight:600}.pada .pl{margin:6px 0 2px;font-weight:600}
-.pada table{border-collapse:collapse}.pada td{border:1px solid #ddd;padding:2px 8px}.pada td:nth-child(3){color:#555}
-.chip{display:inline-block;background:#fff;border:1px solid #c9bda3;border-radius:14px;padding:3px 10px;margin:3px;cursor:pointer;font-size:13px}
-textarea{flex:1;font:inherit;font-size:16px;padding:10px;border-radius:10px;border:1px solid #bbb;resize:none;height:52px}
+:root{--body:"Nirmala UI","Noto Sans Devanagari","Mangal",system-ui,sans-serif;--head:"Aparajita","Kokila","Noto Serif Devanagari","Nirmala UI",serif;
+ --noise:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .42  0 0 0 0 .3  0 0 0 0 .14  0 0 0 .10 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+[data-theme=pothi]{--bg:#e9dcbd;--bg2:#d9c597;--leaf:#f7eed8;--leaf2:#efe1bf;--ink:#2b1d0e;--muted:#6f5a3c;--edge:#d2bb8c;--accent:#8b1e1e;--accent-ink:#fff6e6;--gold:#a8741a;
+ --side:#2f1d12;--side2:#3d271a;--side-ink:#efe2c8;--side-muted:#b59d78;--user:#7a2a1c;--user-ink:#fff4e2;--shadow:#5a3b1466;--line:#8b1e1e;--chip:#fbf4e3}
+[data-theme=ratra]{--bg:#13110d;--bg2:#1b1812;--leaf:#1e1a14;--leaf2:#25201a;--ink:#ece3cf;--muted:#a8997c;--edge:#3a3226;--accent:#e0a34a;--accent-ink:#1a140c;--gold:#e0a34a;
+ --side:#0d0b08;--side2:#1a1610;--side-ink:#e9dfc9;--side-muted:#8f826a;--user:#3a2f22;--user-ink:#f3e9d4;--shadow:#000a;--line:#c98a3a;--chip:#221d16}
+[data-theme=sadha]{--bg:#f6f6f3;--bg2:#efefea;--leaf:#ffffff;--leaf2:#ffffff;--ink:#1d1d1b;--muted:#6b6b66;--edge:#e3e3dd;--accent:#1f4e5f;--accent-ink:#fff;--gold:#1f4e5f;
+ --side:#efeee9;--side2:#e4e3dc;--side-ink:#24241f;--side-muted:#77776f;--user:#1f4e5f;--user-ink:#fff;--shadow:#0002;--line:transparent;--chip:#fff}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;font-family:var(--body);color:var(--ink);background:radial-gradient(ellipse at 50% 30%,var(--bg) 0%,var(--bg2) 100%) fixed;display:flex;overflow:hidden}
+[data-theme=pothi] body,[data-theme=pothi] .leaf{background-image:var(--noise),radial-gradient(ellipse at 50% 30%,var(--bg) 0%,var(--bg2) 100%)}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+input,select,textarea{font:inherit;color:var(--ink)}
+/* ---------- बाजूपट्टी ---------- */
+#side{width:272px;flex:none;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;transition:transform .25s}
+.brand{display:flex;align-items:center;gap:10px;padding:18px 16px 12px}
+.brand b{font-family:var(--head);font-size:30px;font-weight:700;letter-spacing:.5px;line-height:1}
+.brand small{color:var(--side-muted);font-size:11px}
+.newbtn{margin:4px 12px 10px;padding:10px 12px;border:1px solid var(--side-muted);border-radius:12px;display:flex;gap:8px;align-items:center;color:var(--side-ink)}
+.newbtn:hover{background:var(--side2)}
+.sect{padding:10px 16px 4px;font-size:12px;color:var(--side-muted);letter-spacing:.3px}
+#convs{flex:1;overflow-y:auto;padding:0 8px}
+.cv{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--side-ink)}
+.cv:hover,.cv.on{background:var(--side2)}.cv span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cv .x{opacity:0;color:var(--side-muted);padding:0 4px}.cv:hover .x{opacity:1}
+.tools{border-top:1px solid #ffffff1a;padding:8px}
+.tool{display:flex;width:100%;gap:10px;padding:8px 10px;border-radius:10px;font-size:14px;text-align:left;color:var(--side-ink)}
+.tool:hover{background:var(--side2)}
+.themes{display:flex;gap:6px;padding:8px 10px}
+.themes button{flex:1;padding:6px 0;border-radius:8px;font-size:12px;border:1px solid #ffffff22;color:var(--side-ink)}
+.themes button.on{border-color:var(--side-ink);background:var(--side2)}
+#st{padding:4px 12px 12px;font-size:11.5px;color:var(--side-muted);display:flex;gap:6px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:#999;flex:none}.dot.ok{background:#4caf50}.dot.bad{background:#e53935}
+/* ---------- मुख्य ---------- */
+main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+#top{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--edge)}
+#menu{display:none;font-size:22px;padding:2px 8px}
+#agentBar{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1}
+#agentBar button{white-space:nowrap;padding:7px 14px;border-radius:999px;border:1px solid var(--edge);background:var(--chip);font-size:14px}
+#agentBar button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+#kBar{border-bottom:1px solid var(--edge);background:color-mix(in srgb,var(--leaf) 70%,transparent)}
+#kBar summary{cursor:pointer;padding:8px 18px;font-size:14px;list-style:none;color:var(--muted)}#kBar summary::-webkit-details-marker{display:none}
+#kBar summary b{color:var(--ink)}
+.krow{display:flex;flex-wrap:wrap;gap:8px;padding:2px 18px 12px;align-items:center}
+.krow input,.krow select,dialog input,dialog select{padding:7px 9px;border:1px solid var(--edge);border-radius:8px;background:var(--leaf)}
+.btn{padding:8px 16px;border-radius:10px;background:var(--accent);color:var(--accent-ink)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--edge)}
+#kmsg{padding:0 18px 10px;font-size:13px;color:var(--muted)}
+#prog{margin:10px auto 0;width:min(780px,calc(100% - 32px));background:var(--leaf);border:1px solid var(--gold);border-radius:12px;padding:10px 14px;font-size:14px}
+#prog small{color:var(--muted)}
+#chat{flex:1;overflow-y:auto;padding:22px 16px 30px;scroll-behavior:smooth}
+.col{max-width:780px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+/* रिकामे पान */
+.empty{text-align:center;padding:9vh 10px 0}
+.empty .diya{font-size:46px}
+.empty h2{font-family:var(--head);font-size:44px;font-weight:700;margin:6px 0 2px;color:var(--accent)}
+.empty p{color:var(--muted);margin:0 0 22px}
+.ex{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;text-align:left}
+.ex button{padding:12px 14px;border:1px solid var(--edge);border-radius:12px;background:var(--leaf);font-size:14px;line-height:1.5}
+.ex button:hover{border-color:var(--accent)}
+/* प्रश्न */
+.turn.user{align-self:flex-end;max-width:82%;display:flex;flex-direction:column;align-items:flex-end}
+.bubble{background:var(--user);color:var(--user-ink);padding:10px 16px;border-radius:18px 18px 4px 18px;white-space:pre-wrap;line-height:1.6}
+.acts{display:flex;gap:2px;opacity:0;transition:opacity .15s;margin-top:4px}
+.turn:hover .acts,.leaf:hover .acts,.acts.show{opacity:1}
+.acts button{padding:4px 8px;border-radius:8px;font-size:13px;color:var(--muted)}.acts button:hover{background:var(--leaf2);color:var(--ink)}
+.edit{width:100%;min-width:min(560px,80vw);display:flex;flex-direction:column;gap:8px;background:var(--leaf);border:1px solid var(--accent);border-radius:14px;padding:10px}
+.edit textarea{border:0;outline:0;resize:vertical;min-height:70px;background:transparent;font-size:16px;line-height:1.6}
+.edit div{display:flex;gap:8px;justify-content:flex-end}
+/* पोथीचे पान (उत्तर) */
+.leaf{position:relative;background:var(--leaf);border:1px solid var(--edge);border-radius:6px;padding:30px 46px 16px;box-shadow:0 1px 0 var(--edge),0 14px 34px -16px var(--shadow);line-height:1.75;font-size:16.5px}
+[data-theme=pothi] .leaf{background-image:var(--noise),linear-gradient(180deg,var(--leaf) 0%,var(--leaf2) 100%)}
+.leaf::before,.leaf::after{content:"";position:absolute;top:16px;bottom:16px;width:5px;border-left:2px solid var(--line);border-right:1px solid var(--line);opacity:.5}
+.leaf::before{left:18px}.leaf::after{right:18px}
+.hole{position:absolute;top:9px;left:50%;width:9px;height:9px;margin-left:-4.5px;border-radius:50%;background:var(--bg2);box-shadow:inset 0 1px 2px #0005}
+[data-theme=sadha] .leaf{border-radius:14px;padding:22px 26px 12px}[data-theme=sadha] .hole{display:none}
+.pno{text-align:center;font-family:var(--head);font-size:19px;color:var(--accent);margin:-12px 0 6px;letter-spacing:1px}
+[data-theme=sadha] .pno{font-family:var(--body);font-size:12px;color:var(--muted);text-align:left;margin:-8px 0 4px}
+.leaf.turn{animation:turn .85s cubic-bezier(.2,.75,.25,1) both;transform-origin:50% 0}
+@keyframes turn{0%{transform:perspective(1600px) rotateX(-92deg);opacity:0;filter:brightness(.75)}45%{opacity:1}100%{transform:perspective(1600px) rotateX(0);filter:none}}
+#chat.flip .col{animation:flip .6s ease both;transform-origin:0 50%}
+@keyframes flip{0%{transform:perspective(1800px) rotateY(-70deg);opacity:0}100%{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.leaf.turn,#chat.flip .col{animation:none}}
+.md p{margin:.45em 0}.md h4{font-family:var(--head);font-size:23px;margin:.8em 0 .2em;color:var(--accent)}
+[data-theme=sadha] .md h4{font-family:var(--body);font-size:17px}
+.md ul,.md ol{margin:.4em 0;padding-left:1.5em}.md li{margin:.2em 0}
+.md blockquote{margin:.6em 0;padding:4px 14px;border-left:3px solid var(--gold);color:var(--muted);background:color-mix(in srgb,var(--gold) 7%,transparent);border-radius:0 8px 8px 0}
+.md strong{color:var(--accent)}[data-theme=ratra] .md strong{color:var(--gold)}
+.md code{background:var(--leaf2);padding:1px 5px;border-radius:5px;font-size:.92em}
+.md hr{border:0;border-top:1px dashed var(--edge);margin:12px 0}
+.ref{font-size:.82em;padding:1px 7px;border-radius:999px;border:1px solid var(--edge);color:var(--muted);white-space:nowrap}
+.cursor::after{content:"▍";color:var(--accent);animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.think{color:var(--muted);font-style:italic}.think i{animation:blink 1.2s infinite}
+.src{font-size:13px;color:var(--muted);margin-top:10px;border-top:1px dashed var(--edge);padding-top:6px}
+.stopped{font-size:12.5px;color:var(--muted);margin-top:6px}
+.alert{background:#fde2e1;color:#8a1c1c;border:1px solid #e9a3a0;border-radius:10px;padding:10px 14px;font-weight:600;margin-bottom:10px;line-height:1.5}
+.err{color:#b3261e}
+.kchart{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;margin:4px 0 8px}.kchart svg{max-width:100%;height:auto;border-radius:6px}
+.kchart .kt{white-space:pre-wrap;font-size:14px;line-height:1.6;flex:1;min-width:240px}
+.figs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.figs img{max-height:180px;max-width:240px;border:1px solid var(--edge);border-radius:6px;background:#fff}
+.pada{margin-top:10px;font-size:14px}.pada summary{cursor:pointer;color:var(--accent);font-weight:600}.pada .pl{margin:6px 0 2px;font-weight:600}
+.pada table{border-collapse:collapse}.pada td{border:1px solid var(--edge);padding:2px 8px}.pada td:nth-child(3){color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{background:var(--chip);border:1px solid var(--edge);border-radius:999px;padding:4px 12px;font-size:13px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+/* लिहिण्याची जागा */
+#composer{padding:6px 16px 10px}
+.box{max-width:780px;margin:0 auto;background:var(--leaf);border:1px solid var(--edge);border-radius:22px;box-shadow:0 8px 28px -14px var(--shadow);padding:10px 10px 8px 16px;display:flex;flex-direction:column;gap:4px}
+.box:focus-within{border-color:var(--accent)}
+#q{border:0;outline:0;background:transparent;resize:none;font-size:16px;line-height:1.55;max-height:220px;min-height:28px;padding:4px 0}
+.boxrow{display:flex;align-items:center;gap:8px}
+#agentTag{font-size:12.5px;color:var(--muted);flex:1}
+#go{width:38px;height:38px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-size:18px;flex:none}
+#go:disabled{opacity:.35;cursor:default}#go.stop{background:var(--ink);color:var(--leaf)}
+.note{text-align:center;font-size:11.5px;color:var(--muted);padding:6px 0 0}
+/* dialog, toast */
+dialog{border:1px solid var(--edge);border-radius:16px;background:var(--leaf);color:var(--ink);padding:20px 22px;width:min(560px,92vw);box-shadow:0 24px 60px -20px #000a}
+dialog::backdrop{background:#0006}
+dialog h3{font-family:var(--head);font-size:26px;margin:0 0 6px;color:var(--accent)}
+dialog .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}dialog .row>*{flex:1 1 200px}
+#pmsg{margin-top:10px;font-size:13.5px;color:var(--muted);white-space:pre-wrap}
+#toasts{position:fixed;top:14px;right:14px;display:flex;flex-direction:column;gap:8px;z-index:20;max-width:min(420px,90vw)}
+.toast{background:var(--ink);color:var(--leaf);padding:10px 14px;border-radius:12px;font-size:14px;white-space:pre-wrap;box-shadow:0 10px 30px -10px #000a;animation:tin .25s ease}
+@keyframes tin{from{transform:translateY(-8px);opacity:0}}
+@media (max-width:860px){#side{position:fixed;inset:0 auto 0 0;z-index:15;transform:translateX(-100%)}#side.open{transform:none;box-shadow:0 0 0 100vw #0006}
+ #menu{display:block}.leaf{padding:28px 30px 14px}.leaf::before{left:10px}.leaf::after{right:10px}}
 </style></head><body>
-<header><h1>🪔 ग्रंथसागर <small id="st"></small> <small style="opacity:.5">v__VERSION__</small></h1>
-<button class="ghost" onclick="pdfPanel.hidden=!pdfPanel.hidden">📄 PDF जोडा</button>
-<button class="ghost" onclick="openInbox()">📂 PDF folder उघडा</button>
-<button class="ghost" onclick="reindex()">📂 फाइल्स पुन्हा वाचा</button>
-<button class="ghost" onclick="hist=[];chat.innerHTML=''">🧹 नवीन</button></header>
-<div id="agentBar"></div>
-<div id="kPanel" hidden>
- <b>🪐 जन्मकुंडली</b> — गणित तुमच्या संगणकावरच होते (लाहिरी अयनांश, राशी-भाव पद्धत). मग प्रश्नांची उत्तरे या कुंडलीनुसार ग्रंथांतून.
- <div class="row"><input id="kName" placeholder="नाव (ऐच्छिक)" style="width:140px">
- <input id="kDate" type="date" min="1900-01-01" max="2050-12-31"> <input id="kTime" type="time">
- <select id="kPlace" onchange="kLL.hidden=this.value!=='__other'"></select>
- <span id="kLL" hidden><input id="kLat" placeholder="अक्षांश उदा. 18.52" style="width:120px"> <input id="kLon" placeholder="रेखांश उदा. 73.86" style="width:120px"></span>
- <label title="भारत = 5.5">UTC+<input id="kTz" value="5.5" style="width:50px"></label>
- <button onclick="makeKundali()">कुंडली बनवा</button>
- <button id="kClear" class="ghost" style="color:#553;border-color:#9a8" hidden onclick="clearKundali()">✖ कुंडली काढा</button></div>
- <div id="kmsg" style="margin-top:6px;color:#555"></div>
-</div>
-<div id="pdfPanel" hidden>
- <b>📄 PDF ग्रंथ जोडा</b> — scan केलेली किंवा कोणत्याही font मधील PDF, किंवा PDF असलेली zip चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.
- <div class="row"><input type="file" id="pf" accept=".pdf,.zip,application/pdf,application/zip" multiple onchange="pfName()">
- <input id="pn" placeholder="ग्रंथाचे नाव (उदा. चरक संहिता हिंदी टीका भाग 1)">
- <select id="ps" title="विषय — त्या agent ला हा ग्रंथ मिळेल"><option value="">विषय: सामान्य</option></select>
- <select id="pl"><option value="auto">भाषा आपोआप ओळखा</option><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select>
- <button onclick="uploadPdfs()">अपलोड</button></div>
- <div id="pmsg"></div>
-</div>
-<div id="prog" hidden style="max-width:900px;margin:10px auto 0;width:calc(100% - 32px);background:#fff4e5;border:1px solid #e9b872;border-radius:10px;padding:10px 14px;font-size:15px"></div>
-<div id="chat"></div>
-<form onsubmit="send();return false"><textarea id="q" placeholder="उदा. चरक संहितेनुसार अपचनावर काय उपाय आहेत? / गायत्री मंत्राचा अर्थ काय? (Enter = पाठवा, Shift+Enter = नवी ओळ)"></textarea><button>पाठवा</button></form>
-<div style="text-align:center;font-size:12px;color:#777;padding:0 0 8px">हा AI अभ्यासासाठी आहे — चुका होऊ शकतात. उपचारापूर्वी प्रमाणित वैद्य/डॉक्टरांचा सल्ला घ्या.</div>
+<aside id="side">
+ <div class="brand"><span style="font-size:26px">🪔</span><div><b>ग्रंथसागर</b><br><small>v__VERSION__ · ग्रंथांचा अभ्यास-सहाय्यक</small></div></div>
+ <button class="newbtn" onclick="newConv()">✚ &nbsp;नवीन संवाद</button>
+ <div class="sect">मागील संवाद</div>
+ <div id="convs"></div>
+ <div class="tools">
+  <button class="tool" onclick="pdfDlg.showModal()">📄 PDF ग्रंथ जोडा</button>
+  <button class="tool" onclick="openInbox()">📂 PDF folder उघडा</button>
+  <button class="tool" onclick="reindex()">🔄 फाइल्स पुन्हा वाचा</button>
+  <div class="themes"><button data-t="pothi">📜 पोथी</button><button data-t="ratra">🌙 रात्र</button><button data-t="sadha">☀️ साधा</button></div>
+ </div>
+ <div id="st"><span class="dot"></span><span>जोडत आहे…</span></div>
+</aside>
+<main>
+ <div id="top"><button id="menu" onclick="side.classList.toggle('open')">☰</button><div id="agentBar"></div></div>
+ <details id="kBar" hidden><summary>🪐 <b>जन्मकुंडली</b> <span id="kSum">— जन्म तारीख, वेळ, ठिकाण द्या; मग प्रश्नांची उत्तरे कुंडलीनुसार</span></summary>
+  <div class="krow"><input id="kName" placeholder="नाव (ऐच्छिक)" style="width:140px">
+   <input id="kDate" type="date" min="1900-01-01" max="2050-12-31"> <input id="kTime" type="time">
+   <select id="kPlace" onchange="kLL.hidden=this.value!=='__other'"></select>
+   <span id="kLL" hidden><input id="kLat" placeholder="अक्षांश उदा. 18.52" style="width:130px"> <input id="kLon" placeholder="रेखांश उदा. 73.86" style="width:130px"></span>
+   <label title="भारत = 5.5" style="font-size:13px;color:var(--muted)">UTC+<input id="kTz" value="5.5" style="width:52px"></label>
+   <button class="btn" onclick="makeKundali()">कुंडली बनवा</button>
+   <button id="kClear" class="btn ghost" hidden onclick="clearKundali()">✖ काढा</button></div>
+  <div id="kmsg">गणित तुमच्या संगणकावरच होते (लाहिरी अयनांश, राशी-भाव पद्धत).</div>
+ </details>
+ <div id="prog" hidden></div>
+ <div id="chat"><div class="col" id="col"></div></div>
+ <div id="composer"><div class="box">
+  <textarea id="q" rows="1" placeholder="ग्रंथांना प्रश्न विचारा…  (Enter = पाठवा, Shift+Enter = नवी ओळ)"></textarea>
+  <div class="boxrow"><span id="agentTag"></span><button id="go" title="पाठवा" onclick="goClick()">➤</button></div>
+ </div><div class="note">हा AI अभ्यासासाठी आहे — चुका होऊ शकतात. उपचार किंवा मोठ्या निर्णयांपूर्वी तज्ज्ञांचा सल्ला घ्या.</div></div>
+</main>
+<dialog id="pdfDlg"><h3>📄 PDF ग्रंथ जोडा</h3>
+ <div style="font-size:14px;color:var(--muted)">scan केलेली किंवा कोणत्याही font मधील PDF, किंवा PDF असलेली zip चालते. मजकूर आपोआप <code>granth/pdf/</code> मध्ये save होईल.</div>
+ <div class="row"><input type="file" id="pf" accept=".pdf,.zip,application/pdf,application/zip" multiple onchange="pfName()"></div>
+ <div class="row"><input id="pn" placeholder="ग्रंथाचे नाव (उदा. चरक संहिता हिंदी टीका भाग 1)"></div>
+ <div class="row"><select id="ps" title="विषय — त्या agent ला हा ग्रंथ मिळेल"><option value="">विषय: सामान्य</option></select>
+  <select id="pl"><option value="auto">भाषा आपोआप ओळखा</option><option value="hin">हिंदी / संस्कृत</option><option value="mar">मराठी</option></select></div>
+ <div class="row" style="justify-content:flex-end"><button class="btn ghost" style="flex:none" onclick="pdfDlg.close()">बंद</button><button class="btn" style="flex:none" onclick="uploadPdfs()">अपलोड</button></div>
+ <div id="pmsg"></div></dialog>
+<div id="toasts"></div>
 <script>
-const chat=document.getElementById('chat'),q=document.getElementById('q'),st=document.getElementById('st');let hist=[],busy=false;
-function add(cls,t){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;chat.appendChild(d);chat.scrollTop=1e9;return d}
-const pdfPanel=document.getElementById('pdfPanel'),pf=document.getElementById('pf'),pn=document.getElementById('pn'),pl=document.getElementById('pl'),pmsg=document.getElementById('pmsg');
+const $=id=>document.getElementById(id),chat=$('chat'),col=$('col'),q=$('q'),go=$('go'),side=$('side'),pdfDlg=$('pdfDlg');
+const DIG='०१२३४५६७८९',dn=n=>String(n).replace(/\d/g,d=>DIG[d]);
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}catch(e){return null}}
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function toast(t,ms){const d=el('div','toast',t);$('toasts').appendChild(d);setTimeout(()=>d.remove(),ms||6000)}
+/* ---------- theme ---------- */
+function setTheme(t){document.documentElement.dataset.theme=t;ls('gs_theme',t);document.querySelectorAll('.themes button').forEach(b=>b.classList.toggle('on',b.dataset.t===t))}
+document.querySelectorAll('.themes button').forEach(b=>b.onclick=()=>setTheme(b.dataset.t));setTheme(ls('gs_theme')||'pothi');
+/* ---------- markdown (सुरक्षित: आधी escape) ---------- */
+function esc(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function inl(s){return s.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+ .replace(/(^|[^*\w])\*([^*\n]+)\*(?![*\w])/g,'$1<em>$2</em>').replace(/\[([^\]\n]{2,80})\]/g,'<span class="ref">$1</span>')}
+function md(src){const L=esc(src||'').split('\n');let h='',list=null,para=[];
+ const flush=()=>{if(para.length){h+='<p>'+inl(para.join('<br>'))+'</p>';para=[]}},close=()=>{if(list){h+='</'+list+'>';list=null}};
+ for(const raw of L){const l=raw.replace(/\s+$/,'');let m;
+  if(!l.trim()){flush();close();continue}
+  if(m=l.match(/^\s*#{1,4}\s+(.*)/)){flush();close();h+='<h4>'+inl(m[1])+'</h4>';continue}
+  if(m=l.match(/^\s*&gt;\s?(.*)/)){flush();close();h+='<blockquote>'+inl(m[1])+'</blockquote>';continue}
+  if(/^\s*(-{3,}|\*{3,})\s*$/.test(l)){flush();close();h+='<hr>';continue}
+  if(m=l.match(/^\s*[-*•]\s+(.*)/)){flush();if(list!=='ul'){close();h+='<ul>';list='ul'}h+='<li>'+inl(m[1])+'</li>';continue}
+  if(m=l.match(/^\s*[0-9०-९]{1,2}[.)]\s+(.*)/)){flush();if(list!=='ol'){close();h+='<ol>';list='ol'}h+='<li>'+inl(m[1])+'</li>';continue}
+  close();para.push(l)}
+ flush();close();return h}
+/* ---------- संवाद (browser मध्ये जपलेले) ---------- */
+let convs=[];try{convs=JSON.parse(ls('gs_convs')||'[]')}catch(e){}
+let cur=null,ctrl=null,busy=false,AG={},agent=ls('gs_agent')||'sarva',birth=null;
+function save(){if(cur&&cur.msgs.length){convs=convs.filter(c=>c!==cur);convs.unshift(cur)}
+ for(let n=40;n>=5;n-=10){try{localStorage.setItem('gs_convs',JSON.stringify(convs.slice(0,n)));break}catch(e){}}drawConvs()}
+function drawConvs(){const box=$('convs');box.innerHTML='';
+ if(!convs.length){box.appendChild(el('div','sect','अजून संवाद नाहीत'));return}
+ convs.forEach(c=>{const d=el('div','cv'+(c===cur?' on':''));d.appendChild(el('b','',(AG[c.agent]||{}).icon||'🪔'));d.appendChild(el('span','',c.title||'नवीन संवाद'));
+  const x=el('button','x','✕');x.title='काढा';x.onclick=e=>{e.stopPropagation();convs=convs.filter(z=>z!==c);if(c===cur)newConv();save()};d.appendChild(x);
+  d.onclick=()=>openConv(c);box.appendChild(d)})}
+function newConv(){if(busy)stop();cur={id:Date.now().toString(36),title:'',agent,birth:null,msgs:[]};birth=null;kState();render(true);side.classList.remove('open');q.focus()}
+function openConv(c){if(busy)stop();cur=c;birth=c.birth||null;pickAgent(c.agent||'sarva',true);kState();render(true);side.classList.remove('open')}
+/* ---------- दाखवणे ---------- */
+function render(flip){col.innerHTML='';drawConvs();
+ if(flip){chat.classList.remove('flip');void chat.offsetWidth;chat.classList.add('flip')}
+ if(!cur.msgs.length){col.appendChild(emptyPage());return}
+ let page=0;cur.msgs.forEach((m,i)=>{if(m.role!=='user')page++;col.appendChild(m.role==='user'?userNode(m,i):leafNode(m,i,page))});chat.scrollTop=1e9}
+function emptyPage(){const a=AG[agent]||{},d=el('div','empty');d.appendChild(el('div','diya','🪔'));
+ d.appendChild(el('h2','',a.kundali?'कुंडली आणि ग्रंथ':'आज कोणता ग्रंथ उघडूया?'));
+ d.appendChild(el('p','',(a.icon?a.icon+' '+a.name+' — ':'')+(a.about||'वेद, आयुर्वेद, पुराणे, ज्योतिष — तुमचे ग्रंथ, तुमच्या संगणकावर')));
+ const g=el('div','ex');(a.examples||[]).forEach(x=>{const b=el('button','',x);b.onclick=()=>ask(x);g.appendChild(b)});d.appendChild(g);return d}
+function userNode(m,i){const t=el('div','turn user');t.appendChild(el('div','bubble',m.content));
+ const a=el('div','acts');a.appendChild(btn('✏️ संपादित',()=>editAt(i,t)));a.appendChild(btn('📋',()=>copy(m.content),'कॉपी'));t.appendChild(a);return t}
+function btn(t,f,title){const b=el('button','',t);b.onclick=f;if(title)b.title=title;return b}
+function leafNode(m,i,page){const L=el('article','leaf');L.appendChild(el('div','hole'));
+ L.appendChild(el('div','pno',m.role==='card'?'॥ जन्मकुंडली ॥':'॥ पान '+dn(page)+' ॥'));
+ const x=m.x||{};(x.alerts||[]).forEach(t=>L.appendChild(el('div','alert',t)));
+ if(x.kundali||m.role==='card'){const k=x.kundali||m,w=el('div','kchart');w.innerHTML=k.svg;w.appendChild(el('div','kt',k.text));L.appendChild(w);
+  if(m.role==='card'){L.appendChild(el('div','src','विंशोत्तरी महादशा: '+m.dasha));const c=el('div','chips');
+   ['या कुंडलीचे ग्रंथानुसार मुख्य फल सांगा','माझ्या कुंडलीनुसार पुढची २ वर्षे कशी जातील?','कुंडलीतील योगांचे फल'].forEach(s=>{const b=el('span','chip',s);b.onclick=()=>ask(s);c.appendChild(b)});L.appendChild(c);return L}}
+ const body=el('div','md');body.innerHTML=md(m.content)||'';if(x.error)body.appendChild(el('div','err','⚠️ '+x.error));L.appendChild(body);
+ if(x.pada){const d=el('details','pada');d.appendChild(el('summary','','📝 पदच्छेद आणि व्याकरण'));
+  x.pada.items.forEach(it=>it.parts.forEach(p=>{d.appendChild(el('div','pl',p.t+(p.g?'  ('+p.g+(p.r?' '+p.r:'')+')':'')));
+   const t=el('table');p.words.forEach(w=>{const tr=el('tr');w.forEach(v=>tr.appendChild(el('td','',v)));t.appendChild(tr)});d.appendChild(t)}));
+  d.appendChild(el('div','src',x.pada.credit));L.appendChild(d)}
+ if(x.imgs&&x.imgs.length){const g=el('div','figs');x.imgs.forEach(p=>{const a=el('a');a.href='/img?p='+encodeURIComponent(p);a.target='_blank';const im=el('img');im.src=a.href;im.title=p;a.appendChild(im);g.appendChild(a)});L.appendChild(g)}
+ if(x.srcs&&x.srcs.length)L.appendChild(el('div','src','📄 संदर्भ: '+x.srcs.join(', ')));
+ if(x.stopped)L.appendChild(el('div','stopped','⏹ उत्तर मध्येच थांबवले'));
+ const a=el('div','acts');a.appendChild(btn('📋 कॉपी',()=>copy(m.content)));
+ if(i===cur.msgs.length-1&&i>0&&cur.msgs[i-1].role==='user')a.appendChild(btn('🔄 पुन्हा उत्तर',regen));L.appendChild(a);return L}
+function copy(t){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('📋 कॉपी केले',1500)).catch(()=>{const a=el('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove();toast('📋 कॉपी केले',1500)})}
+function editAt(i,node){if(busy)return;const m=cur.msgs[i],e=el('div','edit'),ta=el('textarea');ta.value=m.content;e.appendChild(ta);
+ const r=el('div');r.appendChild(btn('रद्द',()=>render()));const s=btn('पाठवा',()=>{const t=ta.value.trim();if(!t)return;cur.msgs=cur.msgs.slice(0,i);if(!cur.msgs.some(z=>z.role==='user'))cur.title='';ask(t)});s.className='btn';r.appendChild(s);e.appendChild(r);
+ node.replaceWith(e);ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);
+ ta.onkeydown=ev=>{if(ev.key==='Enter'&&!ev.shiftKey){ev.preventDefault();s.click()}else if(ev.key==='Escape')render()}}
+function regen(){if(busy)return;const i=cur.msgs.length-1,t=cur.msgs[i-1].content;cur.msgs=cur.msgs.slice(0,i-1);ask(t)}
+/* ---------- विचारणे ---------- */
+function setBusy(b){busy=b;go.classList.toggle('stop',b);go.textContent=b?'■':'➤';go.title=b?'थांबवा':'पाठवा';go.disabled=!b&&!q.value.trim()}
+function goClick(){busy?stop():ask(q.value)}
+function stop(){if(ctrl)ctrl.abort()}
+async function ask(text){text=(text||'').trim();if(!text||busy)return;q.value='';grow();
+ if(!cur.title)cur.title=text.slice(0,48);cur.agent=agent;
+ const hist=cur.msgs.filter(m=>m.role==='user'||m.role==='assistant').map(m=>({role:m.role,content:m.content})).slice(-6);
+ cur.msgs.push({role:'user',content:text});const m={role:'assistant',content:'',x:{srcs:[],alerts:[]}};cur.msgs.push(m);
+ render();const L=col.lastChild;L.classList.add('turn');const body=L.querySelector('.md');body.innerHTML='<span class="think">ग्रंथ उघडत आहे<i>…</i></span>';
+ setBusy(true);ctrl=new AbortController();let last=0;
+ const paint=()=>{body.innerHTML=md(m.content);body.lastElementChild?body.lastElementChild.classList.add('cursor'):0;
+  if(chat.scrollHeight-chat.scrollTop-chat.clientHeight<160)chat.scrollTop=1e9};
+ try{const r=await fetch('/ask',{method:'POST',signal:ctrl.signal,headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({q:text,history:hist,agent:agent,birth:(AG[agent]&&AG[agent].kundali)?birth:null})});
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
+  while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+   while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const e=JSON.parse(line);
+    if(e.type==='token'){m.content+=e.t;const now=Date.now();if(now-last>50){last=now;paint()}}
+    else if(e.type==='sources')m.x.srcs=m.x.srcs.concat(e.sources);
+    else if(e.type==='images')m.x.imgs=e.images;
+    else if(e.type==='padaccheda')m.x.pada=e;
+    else if(e.type==='kundali'){m.x.kundali={svg:e.svg,text:e.text};const w=el('div','kchart');w.innerHTML=e.svg;w.appendChild(el('div','kt',e.text));L.insertBefore(w,body)}
+    else if(e.type==='alert'){m.x.alerts.push(e.msg);L.insertBefore(el('div','alert',e.msg),body)}
+    else if(e.type==='error')m.x.error=(m.x.error?m.x.error+'\n':'')+e.msg}}
+ }catch(err){if(err.name==='AbortError')m.x.stopped=true;else m.x.error=String(err)}
+ ctrl=null;setBusy(false);
+ const fresh=leafNode(m,cur.msgs.length-1,col.querySelectorAll('.leaf').length);L.replaceWith(fresh);save();q.focus()}
+function grow(){q.style.height='auto';q.style.height=Math.min(q.scrollHeight,220)+'px';if(!busy)go.disabled=!q.value.trim()}
+q.addEventListener('input',grow);
+q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();if(!busy)ask(q.value)}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&busy)stop()});
+/* ---------- agents ---------- */
+async function loadAgents(){try{const r=await (await fetch('/agents')).json(),bar=$('agentBar');
+ r.agents.forEach(a=>{AG[a.id]=a;const b=el('button','',a.icon+' '+a.name);b.dataset.id=a.id;b.title=a.about||'';b.onclick=()=>{pickAgent(a.id);if(!cur.msgs.length)render()};bar.appendChild(b);
+  if(a.inbox){const o=el('option','','विषय: '+a.name);o.value=a.inbox;$('ps').appendChild(o)}});
+ const kp=$('kPlace');r.cities.forEach(c=>kp.appendChild(el('option','',c)));const o=el('option','','इतर ठिकाण (अक्षांश/रेखांश)');o.value='__other';kp.appendChild(o);
+ if(!AG[agent])agent='sarva';pickAgent(agent,true);render()}catch(e){toast('⚠️ agents मिळाले नाहीत: '+e)}}
+function pickAgent(id,quiet){agent=AG[id]?id:'sarva';ls('gs_agent',agent);if(cur&&!cur.msgs.length)cur.agent=agent;
+ document.querySelectorAll('#agentBar button').forEach(b=>b.classList.toggle('on',b.dataset.id===agent));
+ const a=AG[agent]||{};$('kBar').hidden=!a.kundali;$('agentTag').textContent=(a.icon||'')+' '+(a.name||'')+(a.kundali&&birth?' · 🪐 कुंडलीनुसार':'');
+ if(a.inbox)$('ps').value=a.inbox}
+/* ---------- कुंडली ---------- */
+function birthInput(){const p=$('kPlace').value,b={name:$('kName').value,date:$('kDate').value,time:$('kTime').value,tz:$('kTz').value};
+ if(p==='__other'){b.lat=$('kLat').value;b.lon=$('kLon').value}else b.place=p;return b}
+function kState(){$('kClear').hidden=!birth;$('kSum').textContent=birth?'— '+[birth.name,birth.date,birth.time,birth.place||''].filter(Boolean).join(' · '):'— जन्म तारीख, वेळ, ठिकाण द्या; मग प्रश्नांची उत्तरे कुंडलीनुसार';pickAgent(agent,true)}
+async function makeKundali(){const b=birthInput();if(!b.date||!b.time){$('kmsg').textContent='जन्म तारीख आणि वेळ द्या.';return}
+ $('kmsg').textContent='⏳ गणित चालू आहे… (पहिल्यांदा ग्रह-तक्ता ~17 MB उतरतो)';
+ try{const r=await (await fetch('/kundali',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();
+  if(!r.ok){$('kmsg').textContent=r.msg;return}
+  birth=b;cur.birth=b;if(!cur.title)cur.title='🪐 '+(b.name||'कुंडली')+' '+b.date;cur.agent=agent;
+  cur.msgs.push({role:'card',svg:r.svg,text:r.text,dasha:r.chart.dasha.periods.map(p=>p.graha+' '+p.from.slice(0,4)+'–'+p.to.slice(0,4)).join(' · ')});
+  $('kmsg').textContent='✅ कुंडली तयार — आता विचारलेले प्रश्न या कुंडलीनुसार उत्तरले जातील.';$('kBar').open=false;kState();save();render();
+  col.lastChild.classList.add('turn')}catch(e){$('kmsg').textContent='⚠️ '+e}}
+function clearKundali(){birth=null;if(cur)cur.birth=null;kState();save();$('kmsg').textContent='कुंडली काढली — आता सामान्य प्रश्न.'}
+/* ---------- PDF ---------- */
+const pf=$('pf'),pn=$('pn'),pl=$('pl'),pmsg=$('pmsg');
 function pfName(){if(pf.files.length===1){pn.value=pf.files[0].name.replace(/\.(pdf|zip)$/i,'').replace(/[_-]+/g,' ')}else if(pf.files.length>1){pn.value='';pn.placeholder='अनेक फाइल्स — प्रत्येकीचे नाव फाइल-नावावरून'}}
 function upOne(file,name){return new Promise(res=>{const x=new XMLHttpRequest();
- x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value+'&subject='+encodeURIComponent(document.getElementById('ps').value));
+ x.open('POST','/upload?file='+encodeURIComponent(file.name)+'&name='+encodeURIComponent(name)+'&lang='+pl.value+'&subject='+encodeURIComponent($('ps').value));
  x.upload.onprogress=e=>{if(e.lengthComputable)pmsg.textContent=`⬆ ${file.name}: ${Math.round(e.loaded*100/e.total)}%`};
  x.onload=()=>{try{res(JSON.parse(x.responseText).msg)}catch(e){res('⚠️ '+x.responseText)}};x.onerror=()=>res('⚠️ अपलोड अयशस्वी');x.send(file)})}
 async function uploadPdfs(){if(!pf.files.length){pmsg.textContent='आधी PDF निवडा.';return}
- const out=[];for(const f of pf.files){out.push(await upOne(f,pf.files.length===1?pn.value:''))}
- pmsg.textContent=out.join('\n');pf.value='';status()}
+ const out=[];for(const f of pf.files)out.push(await upOne(f,pf.files.length===1?pn.value:''));pmsg.textContent=out.join('\n');pf.value='';status()}
+async function openInbox(){try{const r=await (await fetch('/open-inbox',{method:'POST'})).json();toast(r.msg,9000)}catch(e){toast('⚠️ '+e)}}
+async function reindex(){toast('🔄 फाइल्स वाचत आहे…',2500);try{const r=await (await fetch('/reindex',{method:'POST'})).json();toast(r.msg,9000)}catch(e){toast('⚠️ '+e)}status()}
+/* ---------- स्थिती ---------- */
 let warned=false,ocrErr='';
-async function status(){try{const r=await (await fetch('/status')).json();
- st.textContent=r.ok?`· ${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`:'· Ollama चालू नाही!';
- const pg=document.getElementById('prog');
+async function status(){const s=$('st');try{const r=await (await fetch('/status')).json();
+ s.innerHTML='';s.appendChild(el('span','dot '+(r.ok?'ok':'bad')));s.appendChild(el('span','',r.ok?`${r.model} · ${r.files} फाइल्स · ${r.chunks} तुकडे`:'Ollama चालू नाही!'));
+ const pg=$('prog');
  if(r.ocr||r.indexing||r.fig){pg.hidden=false;
-  pg.innerHTML=(r.ocr?`📄 <b>PDF मजकूर बनत आहे</b>: ${r.ocr_msg}<br>`:'')+(r.indexing?`📖 <b>ग्रंथ वाचणे</b>: ${r.progress}<br>`:'')+(r.fig?`${r.fig_msg}<br>`:'')+
-   '<small>हे पार्श्वभूमीत चालू आहे — तोपर्यंत आधी वाचलेल्या ग्रंथांवर प्रश्न विचारू शकता. ही खिडकी बंद केली तरी काम चालू राहते; काळी खिडकी (command) बंद करू नका.</small>'}
+  pg.innerHTML=(r.ocr?`📄 <b>PDF मजकूर बनत आहे</b>: ${esc(r.ocr_msg)}<br>`:'')+(r.indexing?`📖 <b>ग्रंथ वाचणे</b>: ${esc(r.progress)}<br>`:'')+(r.fig?`${esc(r.fig_msg)}<br>`:'')+
+   '<small>हे पार्श्वभूमीत चालू आहे — तोपर्यंत आधी वाचलेल्या ग्रंथांवर प्रश्न विचारू शकता. काळी खिडकी (command) बंद करू नका.</small>'}
  else pg.hidden=true;
- if(r.warn&&!warned){add('sys',r.warn);warned=true}
- if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;add('sys','⚠️ '+r.ocr_error);pmsg.textContent='⚠️ '+r.ocr_error}
- if(!pdfPanel.hidden&&r.ocr)pmsg.textContent=r.ocr_msg;
- setTimeout(status,(r.indexing||r.ocr||r.fig)?4000:30000)}catch(e){st.textContent='· server बंद';setTimeout(status,10000)}}
-async function openInbox(){try{const r=await (await fetch('/open-inbox',{method:'POST'})).json();add('sys',r.msg)}catch(e){add('sys','⚠️ '+e)}}
-async function reindex(){const s=add('sys','फाइल्स वाचत आहे…');const r=await (await fetch('/reindex',{method:'POST'})).json();s.textContent=r.msg;status()}
-q.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
-async function send(){const t=q.value.trim();if(!t||busy)return;busy=true;q.value='';add('user',t);
- const b=add('bot','…');let ans='',srcs=[],imgs=[],pada=null;
- try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist.slice(-6),agent:agent,birth:(AG[agent]&&AG[agent].kundali)?birth:null})});
-  const rd=r.body.getReader(),dec=new TextDecoder();let buf='';
-  while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
-   while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line)continue;const m=JSON.parse(line);
-    if(m.type==='sources')srcs=srcs.concat(m.sources);else if(m.type==='images')imgs=m.images;else if(m.type==='padaccheda')pada=m;else if(m.type==='kundali'){const w=document.createElement('div');w.className='kchart';w.innerHTML=m.svg;
-     const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=m.text;w.appendChild(t);b.parentNode.insertBefore(w,b)}else if(m.type==='token'){ans+=m.t;b.textContent=ans;chat.scrollTop=1e9}
-    else if(m.type==='alert'){const a=document.createElement('div');a.className='alert';a.textContent=m.msg;chat.insertBefore(a,b)}
-    else if(m.type==='error'){ans+='\n⚠️ '+m.msg;b.textContent=ans}}}
- }catch(e){b.textContent='⚠️ '+e}
- if(pada){const d=document.createElement('details');d.className='pada';const sm=document.createElement('summary');sm.textContent='📝 पदच्छेद आणि व्याकरण';d.appendChild(sm);
-  pada.items.forEach(it=>it.parts.forEach(p=>{const h=document.createElement('div');h.className='pl';h.textContent=p.t+(p.g?'  ('+p.g+(p.r?' '+p.r:'')+')':'');d.appendChild(h);
-   const t=document.createElement('table');p.words.forEach(w=>{const tr=document.createElement('tr');w.forEach(x=>{const td=document.createElement('td');td.textContent=x;tr.appendChild(td)});t.appendChild(tr)});d.appendChild(t)}));
-  const c=document.createElement('div');c.className='src';c.textContent=pada.credit;d.appendChild(c);b.appendChild(d)}
- if(imgs.length){const g=document.createElement('div');g.className='figs';imgs.forEach(p=>{const a=document.createElement('a');a.href='/img?p='+encodeURIComponent(p);a.target='_blank';
-  const im=document.createElement('img');im.src=a.href;im.title=p;a.appendChild(im);g.appendChild(a)});b.appendChild(g)}
- if(srcs.length){const s=document.createElement('div');s.className='src';s.textContent='📄 संदर्भ: '+srcs.join(', ');b.appendChild(s)}
- hist.push({role:'user',content:t},{role:'assistant',content:ans});busy=false;q.focus()}
-let agent=localStorage.getItem('gs_agent')||'sarva',AG={},birth=null;
-const kPanel=document.getElementById('kPanel'),kmsg=document.getElementById('kmsg');
-async function loadAgents(){try{const r=await (await fetch('/agents')).json();const bar=document.getElementById('agentBar');
- r.agents.forEach(a=>{AG[a.id]=a;const b=document.createElement('button');b.textContent=a.icon+' '+a.name;b.dataset.id=a.id;b.onclick=()=>pickAgent(a.id);bar.appendChild(b);
-  if(a.inbox){const o=document.createElement('option');o.value=a.inbox;o.textContent='विषय: '+a.name;document.getElementById('ps').appendChild(o)}});
- const ab=document.createElement('span');ab.id='agentAbout';bar.appendChild(ab);
- const kp=document.getElementById('kPlace');r.cities.forEach(c=>{const o=document.createElement('option');o.textContent=c;kp.appendChild(o)});
- const o=document.createElement('option');o.value='__other';o.textContent='इतर ठिकाण (अक्षांश/रेखांश)';kp.appendChild(o);
- if(!AG[agent])agent='sarva';pickAgent(agent,true)}catch(e){}}
-function pickAgent(id,quiet){agent=id;try{localStorage.setItem('gs_agent',id)}catch(e){}
- document.querySelectorAll('#agentBar button').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
- const a=AG[id];document.getElementById('agentAbout').textContent=a.about||'';kPanel.hidden=!a.kundali;
- if(a.inbox)document.getElementById('ps').value=a.inbox;
- if(!quiet&&a.examples.length){const d=add('sys','');d.append(a.icon+' '+a.name+' — उदाहरणे: ');
-  a.examples.forEach(x=>{const c=document.createElement('span');c.className='chip';c.textContent=x;c.onclick=()=>{q.value=x;send()};d.appendChild(c)})}}
-function birthInput(){const pl=document.getElementById('kPlace').value;
- const b={name:kName.value,date:kDate.value,time:kTime.value,tz:kTz.value};
- if(pl==='__other'){b.lat=kLat.value;b.lon=kLon.value}else b.place=pl;return b}
-async function makeKundali(){const b=birthInput();if(!b.date||!b.time){kmsg.textContent='जन्म तारीख आणि वेळ द्या.';return}
- kmsg.textContent='⏳ गणित चालू आहे… (पहिल्यांदा ग्रह-तक्ता ~17 MB उतरतो)';
- try{const r=await (await fetch('/kundali',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json();
-  if(!r.ok){kmsg.textContent=r.msg;return}
-  birth=b;kmsg.textContent='✅ कुंडली तयार — आता विचारलेले प्रश्न या कुंडलीनुसार उत्तरले जातील.';document.getElementById('kClear').hidden=false;
-  const d=add('bot','');const w=document.createElement('div');w.className='kchart';w.innerHTML=r.svg;
-  const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=r.text;w.appendChild(t);d.appendChild(w);
-  const tbl=document.createElement('div');tbl.className='src';tbl.textContent='विंशोत्तरी महादशा: '+r.chart.dasha.periods.map(p=>p.graha+' '+p.from.slice(0,4)+'–'+p.to.slice(0,4)).join(' · ');d.appendChild(tbl);
-  const c=document.createElement('div');['या कुंडलीचे ग्रंथानुसार मुख्य फल सांगा','लग्न राशीचे फल ग्रंथांनुसार','कुंडलीतील योगांचे फल'].forEach(x=>{const s=document.createElement('span');s.className='chip';s.textContent=x;s.onclick=()=>{q.value=x;send()};c.appendChild(s)});d.appendChild(c);
-  chat.scrollTop=1e9}catch(e){kmsg.textContent='⚠️ '+e}}
-function clearKundali(){birth=null;document.getElementById('kClear').hidden=true;kmsg.textContent='कुंडली काढली — आता सामान्य प्रश्न.'}
-loadAgents();
-status();
+ if(r.warn&&!warned){toast(r.warn,12000);warned=true}
+ if(r.ocr_error&&r.ocr_error!==ocrErr){ocrErr=r.ocr_error;toast('⚠️ '+r.ocr_error,12000);pmsg.textContent='⚠️ '+r.ocr_error}
+ if(pdfDlg.open&&r.ocr)pmsg.textContent=r.ocr_msg;
+ setTimeout(status,(r.indexing||r.ocr||r.fig)?4000:30000)}catch(e){s.innerHTML='<span class="dot bad"></span><span>server बंद</span>';setTimeout(status,10000)}}
+cur={id:Date.now().toString(36),title:'',agent,birth:null,msgs:[]};setBusy(false);drawConvs();loadAgents();status();q.focus();
 </script></body></html>"""
+
+
+class QuietServer(ThreadingHTTPServer):
+    """browser ने connection मध्येच तोडले (Windows: ConnectionAbortedError 10053) तर लांब traceback नको"""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1292,13 +1483,14 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     self._send({"type": "error", "msg": f"कुंडली बनवता आली नाही: {e}"})
             ACTIVE_ASKS[0] += 1
+            gen = answer_events((data.get("q") or "").strip(), data.get("history", []), data.get("agent"), chart)
             try:
-                for ev in answer_events((data.get("q") or "").strip(), data.get("history", []),
-                                        data.get("agent"), chart):
+                for ev in gen:
                     self._send(ev)
             finally:
+                gen.close()                 # browser गेला/थांबवले -> Ollama चे उत्तरही लगेच थांबते (CPU वाचतो)
                 ACTIVE_ASKS[0] -= 1
-        except (BrokenPipeError, ConnectionResetError):
+        except (ConnectionError, OSError):  # 'थांबवा' दाबले, नवे पान उघडले किंवा tab बंद केला — चूक नाही
             return
 
 
@@ -1567,7 +1759,7 @@ def main():
     print(f"🪔 ग्रंथसागर सुरू होत आहे… (आवृत्ती {VERSION})")
     print(f"   folder: {HERE}")
     try:                                   # आधी port घ्या — जुना ग्रंथसागर चालू असेल तर इथेच थांबा
-        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+        srv = QuietServer(("127.0.0.1", PORT), Handler)
     except OSError:
         old_ver = "जुनी"
         try:
