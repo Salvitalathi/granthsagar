@@ -683,8 +683,12 @@ def process_pdf(pdf, name, out_dir, lang="auto", jobs=None, dpi=300, force_ocr=F
     for old in glob.glob(os.path.join(dest, "part_*.txt")):
         os.remove(old)
     img_dest = os.path.join(dest, "images")              # चित्रे जशीच्या तशी
-    shutil.rmtree(img_dest, ignore_errors=True)
     figs = sorted(os.listdir(fig_dir)) if os.path.isdir(fig_dir) else []
+    if os.path.isdir(img_dest):                          # जुनी नसलेली चित्रे काढा; असलेल्यांची वर्णने (.desc) जपा
+        keep = set(figs)
+        for f in os.listdir(img_dest):
+            if (f[:-5] if f.endswith(".desc") else f) not in keep:
+                os.remove(os.path.join(img_dest, f))
     if figs:
         os.makedirs(img_dest, exist_ok=True)
         for f in figs:

@@ -102,6 +102,11 @@ q = J.search_queries(c, on)
 if not any("महादशा" in x for x in q[:8]):
     fail.append("दशा-शोध पहिल्या ८ मध्ये नाही")
 
+import json as _json
+try:                                       # browser ला जाणारी कुंडली साध्या json ने (numpy bool नको)
+    _json.dumps(J.compute_chart("1990-08-15", "06:30", *J.CITIES["पुणे"]), ensure_ascii=False)
+except TypeError as e:
+    fail.append(f"कुंडली JSON: {e}")
 if worst["ayan"] > 1 / 3600:
     fail.append(f"अयनांश फरक {worst['ayan']*3600:.1f}\"")
 if fail:

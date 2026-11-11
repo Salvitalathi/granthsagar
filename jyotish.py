@@ -240,7 +240,7 @@ def compute_chart(date, time, lat, lon, tz=5.5, name=""):
         sign = int(L // 30)
         nak = int(L // (360 / 27))
         d = ((trop2[g] - trop[g] + 540) % 360) - 180
-        retro = g in ("राहू", "केतू") or d < 0
+        retro = g in ("राहू", "केतू") or bool(d < 0)      # numpy bool नको — JSON मध्ये जात नाही
         status = []
         if g in EXALT and sign == EXALT[g]:
             status.append("उच्च")
@@ -249,10 +249,10 @@ def compute_chart(date, time, lat, lon, tz=5.5, name=""):
         if g in OWN and sign in OWN[g]:
             status.append("स्वराशी")
         planets.append({
-            "graha": g, "lon": L, "rashi": RASHI[sign], "sign": sign, "deg": _dms(L % 30),
+            "graha": g, "lon": float(L), "rashi": RASHI[sign], "sign": sign, "deg": _dms(L % 30),
             "bhava": (sign - lagna_sign) % 12 + 1,
             "nakshatra": NAKSHATRA[nak], "pada": int((L % (360 / 27)) // (360 / 108)) + 1,
-            "vakri": retro and g not in ("राहू", "केतू"), "status": status,
+            "vakri": bool(retro and g not in ("राहू", "केतू")), "status": status,
         })
     P = {p["graha"]: p for p in planets}
     sun, moon = P["सूर्य"]["lon"], P["चंद्र"]["lon"]
